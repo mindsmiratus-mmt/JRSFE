@@ -1,7 +1,9 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'https://vedaapi.mindsmiratus.in',
+  baseURL:
+    import.meta.env.VITE_API_BASE_URL ||
+    'https://vedaapi.mindsmiratus.in/api/public',
   headers: {
     'Content-Type': 'application/json',
     // Added the X-Api-Key header pulling from the .env file

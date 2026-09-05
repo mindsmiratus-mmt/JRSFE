@@ -13,7 +13,7 @@ interface SwitchShopPayload {
 export const useLogin = () => {
   return useMutation({
     mutationFn: async (data: LoginPayload) => {
-      const res = await api.post('/Auth/login', data);
+      const res = await api.post('/auth/login', data);
       return res.data;
     },
   });
@@ -22,7 +22,7 @@ export const useLogin = () => {
 export const useSwitchShop = () => {
   return useMutation({
     mutationFn: async (data: SwitchShopPayload) => {
-      const res = await api.post('/Auth/switch-shop', data);
+      const res = await api.post('/auth/switch-shop', data);
       return res.data;
     },
   });
