@@ -7,8 +7,8 @@ RUN npm ci
 
 COPY . .
 
-ARG VITE_API_BASE_URL=https://vedaapi.mindsmiratus.in/api/public
-ARG VITE_INTERNAL_API_KEY
+ARG VITE_API_BASE_URL=https://vedaapi.mindsmiratus.in/api
+ARG VITE_INTERNAL_API_KEY=
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_INTERNAL_API_KEY=${VITE_INTERNAL_API_KEY}
 
