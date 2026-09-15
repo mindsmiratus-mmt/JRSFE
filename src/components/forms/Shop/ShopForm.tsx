@@ -67,6 +67,8 @@ const ShopSchema = Yup.object().shape({
   salesChannel: Yup.string().required("Sales channel is required"),
 
   isActive: Yup.boolean().default(true),
+
+  allowEcommerceBackorder: Yup.boolean().default(false),
 });
 
 interface ShopFormProps {
@@ -87,6 +89,7 @@ interface ShopFormProps {
     invoiceDisplayName?: string;
     secondaryLogoPath?: string | null;
     isActive?: boolean;
+    allowEcommerceBackorder?: boolean;
   };
   onSuccess: (msg: string) => void;
   onCancel: () => void;
@@ -108,6 +111,7 @@ type ShopFormValues = {
   latitude: number | "";
   longitude: number | "";
   isActive: boolean;
+  allowEcommerceBackorder: boolean;
   logoFile: File | null;
 };
 
@@ -149,6 +153,8 @@ export const ShopForm = ({
     latitude: (shop?.latitude ?? "") as number | "",
     longitude: (shop?.longitude ?? "") as number | "",
     isActive: shop?.isActive ?? true,
+    // Missing/undefined (e.g. an older backend response) must never be treated as true.
+    allowEcommerceBackorder: shop?.allowEcommerceBackorder ?? false,
     logoFile: null,
   };
 
@@ -172,6 +178,9 @@ export const ShopForm = ({
         latitude: values.latitude === "" ? 0 : Number(values.latitude),
         longitude: values.longitude === "" ? 0 : Number(values.longitude),
         isActive: values.isActive,
+        // Always send this explicitly — the Shop PUT endpoint replaces the whole entity,
+        // so omitting it would silently reset it to false on any unrelated shop edit.
+        allowEcommerceBackorder: values.allowEcommerceBackorder,
       };
 
       let savedShopId = shop?.id;
@@ -406,6 +415,33 @@ export const ShopForm = ({
                 />
                 <Label htmlFor="isActive" className="cursor-pointer">
                   Shop is Active
+                </Label>
+              </div>
+            </div>
+
+            {/* Ecommerce Settings Section */}
+            <div className="rounded-lg border p-6 space-y-4">
+              <div>
+                <h3 className="text-lg font-semibold">Ecommerce Settings</h3>
+                <p className="text-sm text-muted-foreground">
+                  These settings apply only to online/ecommerce orders and
+                  never affect POS billing.
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Switch
+                  id="allowEcommerceBackorder"
+                  checked={values.allowEcommerceBackorder}
+                  onCheckedChange={(checked) =>
+                    setFieldValue("allowEcommerceBackorder", checked)
+                  }
+                />
+                <Label
+                  htmlFor="allowEcommerceBackorder"
+                  className="cursor-pointer"
+                >
+                  Allow ecommerce orders for unavailable items
                 </Label>
               </div>
             </div>

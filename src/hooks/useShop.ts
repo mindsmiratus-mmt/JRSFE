@@ -23,6 +23,10 @@ export interface Shop {
     secondaryLogoPath?: string;
     invoiceDisplayName?: string;
     isActive?: boolean;
+    // Ecommerce-only: when true, the public storefront may accept orders for existing
+    // items that currently have no sale-ready stock. Never affects POS. Defaults to
+    // false on the backend, so treat a missing/undefined value as false, not true.
+    allowEcommerceBackorder?: boolean;
     createdBy: string;
     createDate: string;
     updatedBy?: string;
@@ -47,6 +51,7 @@ export interface CreateShopData {
     shopCode?: string;
     secondaryLogoPath?: string;
     isActive?: boolean;
+    allowEcommerceBackorder?: boolean;
     createdBy?: string
 }
 
@@ -70,6 +75,7 @@ export interface UpdateShopData {
     secondaryLogoPath?: string;
     updatedBy?: string;
     isActive?: boolean;
+    allowEcommerceBackorder?: boolean;
 }
 
 
