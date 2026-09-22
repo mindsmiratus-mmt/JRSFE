@@ -21,6 +21,11 @@ import {
     type CreateCustomerData,
     type UpdateCustomerData,
 } from "@/hooks/useCustomer";
+import {
+    useCreateCustomerAddress,
+    useUpdateCustomerAddress,
+    type CustomerAddress,
+} from "@/hooks/useCustomerAddress";
 import { SelectSearchColor } from "@/components/ui/SelectSearchColor";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -63,12 +68,17 @@ const CustomerSchema = Yup.object().shape({
 // ========================
 interface CustomerFormProps {
     customer?: any;
+    // The customer's current default saved CustomerAddress, if one exists. When absent, the
+    // legacy Customer.Address/City/State/PinCode fields are used as the form's initial values
+    // instead (backward compatibility for customers created before CustomerAddress existed).
+    defaultAddress?: CustomerAddress | null;
     onSuccess: (msg: string) => void;
     onCancel: () => void;
 }
 
 export const CustomerForm = ({
     customer,
+    defaultAddress,
     onSuccess,
     onCancel,
 }: CustomerFormProps) => {
@@ -76,6 +86,8 @@ export const CustomerForm = ({
     const createMutation = useCreateCustomer();
     const { data: customers = [], isLoading: customerLoading } = useAllCustomer();
     const updateMutation = useUpdateCustomer();
+    const createAddressMutation = useCreateCustomerAddress();
+    const updateAddressMutation = useUpdateCustomerAddress();
 
     const initialValues = {
         name: customer?.name || "",
@@ -86,10 +98,12 @@ export const CustomerForm = ({
         gstin: customer?.gstin || "",
         pan: customer?.pan || "",
         adharNo: customer?.adharNo || "",
-        address: customer?.address || "",
-        city: customer?.city || "",
-        state: customer?.state || "",
-        pinCode: customer?.pinCode || "",
+        // The default CustomerAddress, when one exists, is authoritative over the legacy flat
+        // fields — those remain only as a fallback for customers with no saved address yet.
+        address: defaultAddress?.addressLine1 ?? customer?.address ?? "",
+        city: defaultAddress?.city ?? customer?.city ?? "",
+        state: defaultAddress?.state ?? customer?.state ?? "",
+        pinCode: defaultAddress?.pinCode ?? customer?.pinCode ?? "",
         referralId: customer?.referralId || "",
         isActive: customer?.isActive ?? true,
     };
@@ -129,15 +143,102 @@ export const CustomerForm = ({
             isActive: values.isActive ?? true,
         };
 
+        // The Address/City/State/PinCode fields represent the customer's DEFAULT saved address.
+        // Any of the four being filled is treated as "the staff supplied address data" — the
+        // backend's own [Required] validation on the address DTO is the source of truth for
+        // completeness, so partial input is submitted rather than silently dropped or re-validated
+        // here (no address business rules are duplicated on the frontend).
+        const hasAddressInput = Boolean(
+            values.address?.trim() || values.city?.trim() || values.state?.trim() || values.pinCode?.trim()
+        );
+
         try {
             if (isEdit) {
                 await updateMutation.mutateAsync({
                     id: customer.id,
                     data: { ...payload, id: customer.id },
                 });
+
+                // Default-address orchestration happens after the customer save succeeds, and
+                // failures here are surfaced distinctly rather than folded into a single generic
+                // success message — the customer record is safely saved either way.
+                try {
+                    if (defaultAddress) {
+                        // Case 1: a default address already exists — update it in place. Fields the
+                        // simple form doesn't expose (recipient name/phone/line 2/country/type) are
+                        // preserved as-is rather than overwritten, so edits made via the "Saved
+                        // Addresses" dialog are never clobbered by this form.
+                        if (hasAddressInput) {
+                            await updateAddressMutation.mutateAsync({
+                                customerId: customer.id,
+                                addressId: defaultAddress.id,
+                                data: {
+                                    recipientName: defaultAddress.recipientName,
+                                    phone: defaultAddress.phone,
+                                    addressLine1: values.address,
+                                    addressLine2: defaultAddress.addressLine2 || undefined,
+                                    city: values.city,
+                                    state: values.state,
+                                    pinCode: values.pinCode,
+                                    country: defaultAddress.country,
+                                    addressType: defaultAddress.addressType,
+                                },
+                            });
+                        }
+                        // If the fields were cleared, we deliberately leave the existing default
+                        // address untouched rather than deleting it — deletion is an explicit,
+                        // separate action in the "Saved Addresses" section.
+                    } else if (hasAddressInput) {
+                        // Case 2: no CustomerAddress yet (a legacy-only customer, or one that never
+                        // had address data) but the form now has data — create one. It becomes the
+                        // default automatically per CustomerAddressService's existing rule. This is
+                        // also how a legacy-only customer's address is migrated into a real
+                        // CustomerAddress record the first time the form is saved.
+                        await createAddressMutation.mutateAsync({
+                            customerId: customer.id,
+                            data: {
+                                recipientName: customer.name,
+                                phone: customer.phone,
+                                addressLine1: values.address,
+                                city: values.city,
+                                state: values.state,
+                                pinCode: values.pinCode,
+                            },
+                        });
+                    }
+                    // Case 3 (no default, no input): nothing to do.
+                } catch (addrErr: any) {
+                    toast.error(
+                        addrErr?.response?.data?.message ||
+                            "Customer was saved, but the default address could not be saved. Check Saved Addresses."
+                    );
+                }
+
                 onSuccess("Customer updated successfully!");
             } else {
-                await createMutation.mutateAsync(payload as CreateCustomerData);
+                const created = await createMutation.mutateAsync(payload as CreateCustomerData);
+
+                if (hasAddressInput) {
+                    try {
+                        await createAddressMutation.mutateAsync({
+                            customerId: created.id,
+                            data: {
+                                recipientName: values.name,
+                                phone: values.phone,
+                                addressLine1: values.address,
+                                city: values.city,
+                                state: values.state,
+                                pinCode: values.pinCode,
+                            },
+                        });
+                    } catch (addrErr: any) {
+                        toast.error(
+                            addrErr?.response?.data?.message ||
+                                "Customer was created, but the address could not be saved. Add it from Saved Addresses."
+                        );
+                    }
+                }
+
                 onSuccess("Customer created successfully!");
             }
         } catch (err: any) {
