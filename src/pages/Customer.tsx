@@ -81,8 +81,9 @@ export const Customer = () => {
   const { data: allCustomer = [] } = useAllCustomer();
   const referralMap = new Map<number, string>();
 
+  // Referrer shown as "Name — ReferralCode" so it is clear which customer's code it is.
   allCustomer?.forEach((c: any) => {
-    referralMap.set(c.id, c.name);
+    referralMap.set(c.id, c.referralCode ? `${c.name} — ${c.referralCode}` : c.name);
   });
   
   const customers = data?.data || [];
@@ -263,6 +264,11 @@ export const Customer = () => {
                 )
               },
               { key: "name", label: "Name", render: (r) => <strong className="whitespace-nowrap">{r.name}</strong> },
+              {
+                key: "referralCode",
+                label: "Referral Code",
+                render: (r) => <span className="whitespace-nowrap font-mono">{r.referralCode || "-"}</span>,
+              },
               { key: "phone", label: "Phone", render: (r) => <span className="whitespace-nowrap">{r.phone}</span> },
               { key: "email", label: "Email" },
               {
@@ -277,15 +283,8 @@ export const Customer = () => {
               { key: "gstin", label: "GSTIN", render: (r) => r.gstin || "-" },
               { key: "pan", label: "PAN", render: (r) => r.pan || "-" },
               { key: "adharNo", label: "Aadhaar", render: (r) => r.adharNo || "-" },
-              {
-                key: "address",
-                label: "Address",
-                render: (r) => (
-                  <span className="line-clamp-1 min-w-[150px] max-w-[250px] block" title={r.address}>
-                    {r.address || "-"}
-                  </span>
-                ),
-              },
+              // No Address column: addresses are CustomerAddress records managed per customer (Saved
+              // Addresses on the edit page), and fetching them per row here would be N+1 requests.
               {
                 key: "referralId",
                 label: "Referred By",
@@ -376,6 +375,7 @@ export const Customer = () => {
 
                     {/* Card Details */}
                     <div className="text-sm text-gray-600 grid grid-cols-1 gap-1.5">
+                        <div className="flex justify-between"><span className="text-gray-400">Referral Code</span> <span className="font-mono">{c.referralCode || "-"}</span></div>
                         <div className="flex justify-between"><span className="text-gray-400">Phone</span> <span>{c.phone}</span></div>
                         <div className="flex justify-between"><span className="text-gray-400">Email</span> <span className="truncate ml-2" title={c.email}>{c.email || "-"}</span></div>
                         <div className="flex justify-between"><span className="text-gray-400">DOB</span> <span>{formatDateTime(c.dateOfBirth)}</span></div>
@@ -386,9 +386,6 @@ export const Customer = () => {
                         <div className="flex justify-between"><span className="text-gray-400">PAN</span> <span>{c.pan || "-"}</span></div>
                         <div className="flex justify-between"><span className="text-gray-400">Aadhaar</span> <span>{c.adharNo || "-"}</span></div>
                         <div className="flex justify-between"><span className="text-gray-400">Referred</span> <span className="truncate ml-2" title={c.referralId ? referralMap.get(c.referralId) : ""}>{c.referralId ? (referralMap.get(c.referralId) ?? "Unknown") : "-"}</span></div>
-                        <div className="mt-1 pt-2 border-t border-gray-100 text-xs line-clamp-2" title={c.address}>
-                            <span className="text-gray-400 mr-1">Address:</span>{c.address || "-"}
-                        </div>
                     </div>
                 </div>
               ))}

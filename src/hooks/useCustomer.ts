@@ -20,9 +20,21 @@ export interface Customer {
     state: string;
     pinCode: string;
     isActive: boolean;
-    referralId: number;
-    referredBy: string;
+    // The referrer (read-only). Set by the server once, at creation, from the referrer's code;
+    // never sent by this app and never changed by an edit.
+    referralId: number | null;
+    referredBy?: { id: number; name: string; referralCode?: string | null } | null;
+    // Server-generated on create and permanent (never changes with name/phone). Read-only here:
+    // the create/update payload types below exclude it. Null only for legacy customers the
+    // backfill could not assign.
+    referralCode?: string | null;
 }
+
+/** Longest possible customer referral code ("VEDA" + 4 letters + 4 digits) — matches the backend. */
+export const REFERRAL_CODE_MAX_LENGTH = 12;
+
+// Server-owned fields that are never written by this app.
+type ServerOwnedCustomerFields = 'id' | 'referralCode' | 'referralId' | 'referredBy';
 
 export interface CustomerFilters {
     page?: number;
@@ -43,12 +55,14 @@ export interface PaginatedResponse<T> {
 }
 
 export interface CreateCustomerData
-    extends Omit<Customer, 'id'> {
-    // id is auto-generated, so we omit it when creating
+    extends Omit<Customer, ServerOwnedCustomerFields> {
+    // Optional: the REFERRING customer's code. The server resolves it to the referrer (unknown codes
+    // are ignored); it is not the new customer's own code, which the server generates.
+    referredByReferralCode?: string;
 }
 
 export interface UpdateCustomerData
-    extends Partial<Customer> {
+    extends Partial<Omit<Customer, ServerOwnedCustomerFields>> {
     id: number;
 }
 
@@ -100,14 +114,19 @@ export const useCustomer = (id: number | null) => {
 };
 
 // 3. Create Customer
-// Backend returns { id } (not the full Customer) so callers can chain a follow-up call —
-// e.g. creating the customer's default CustomerAddress — without a second lookup.
+// Backend returns { id, referralCode } (not the full Customer) so callers can chain a follow-up
+// call — e.g. creating the customer's default CustomerAddress — and show the generated code.
+export interface CreatedCustomer {
+    id: number;
+    referralCode: string | null;
+}
+
 export const useCreateCustomer = () => {
     const queryClient = useQueryClient();
 
-    return useMutation<{ id: number }, Error, CreateCustomerData>({
+    return useMutation<CreatedCustomer, Error, CreateCustomerData>({
         mutationFn: async (payload) => {
-            const { data } = await api.post<{ id: number }>('/Customer', payload);
+            const { data } = await api.post<CreatedCustomer>('/Customer', payload);
             return data;
         },
         onSuccess: () => {

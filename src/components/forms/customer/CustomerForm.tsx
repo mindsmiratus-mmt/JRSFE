@@ -15,14 +15,13 @@ import * as Yup from "yup";
 import { toast } from "@/components/ui/toast";
 import { DateInput } from "@/components/ui/DatePicker";
 import {
-    useAllCustomer,
     useCreateCustomer,
     useUpdateCustomer,
+    REFERRAL_CODE_MAX_LENGTH,
     type CreateCustomerData,
     type UpdateCustomerData,
 } from "@/hooks/useCustomer";
 import { useCreateCustomerAddress } from "@/hooks/useCustomerAddress";
-import { SelectSearchColor } from "@/components/ui/SelectSearchColor";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { alphanumericUpper, digitsOnly, getApiErrorMessage } from "@/utils/formInput";
@@ -63,7 +62,6 @@ const CustomerSchema = Yup.object().shape({
     adharNo: Yup.string()
         .matches(/^\d{12}$/, "Aadhaar must be 12 digits")
         .optional(),
-    referralId: Yup.string().optional(),
 });
 
 const CreateCustomerSchema = CustomerSchema.shape({
@@ -90,7 +88,6 @@ export const CustomerForm = ({
 }: CustomerFormProps) => {
     const isEdit = !!customer;
     const createMutation = useCreateCustomer();
-    const { data: customers = [], isLoading: customerLoading } = useAllCustomer();
     const updateMutation = useUpdateCustomer();
     const createAddressMutation = useCreateCustomerAddress();
 
@@ -109,40 +106,18 @@ export const CustomerForm = ({
         city: "",
         state: "",
         pinCode: "",
-        referralId: customer?.referralId || "",
+        // Add Customer only: the REFERRER's code as typed by staff. The server resolves it to the
+        // referring customer (an unknown code is ignored). Not the new customer's own code.
+        referredByReferralCode: "",
         isActive: customer?.isActive ?? true,
     };
 
-    const handleSubmit = async (values: any, { setSubmitting }: any) => {
-        if (isEdit && values.referralId) {
-            // 1. Check for self-referral
-            if (String(values.referralId) === String(customer?.id)) {
-                toast.error("A customer cannot be their own reference.");
-                setSubmitting(false);
-                return;
-            }
-
-            // 2. Check for mutual/cyclic referral
-            const selectedReferenceUser = customers.find(
-                (c: any) => String(c.id) === String(values.referralId)
-            );
-
-            if (
-                selectedReferenceUser &&
-                String(selectedReferenceUser.referralId) === String(customer?.id)
-            ) {
-                toast.error(
-                    `Mutual referral blocked: ${selectedReferenceUser.name} is already referred by you!`
-                );
-                setSubmitting(false);
-                return;
-            }
-        }
-
-        const { address, city, state, pinCode, ...customerValues } = values;
+    const handleSubmit = async (values: any, { setSubmitting, setFieldError, setFieldTouched }: any) => {
+        // The referrer is never sent as an id and never changed on edit — the server sets it once,
+        // at creation, from the referral code — so no self/mutual-referral checks are needed here.
+        const { address, city, state, pinCode, referredByReferralCode, ...customerValues } = values;
         const customerPayload = {
             ...customerValues,
-            referralId: values.referralId || undefined,
             dateOfBirth: values.dateOfBirth
                 ? new Date(values.dateOfBirth).toISOString()
                 : null,
@@ -181,6 +156,7 @@ export const CustomerForm = ({
                     city,
                     state,
                     pinCode,
+                    referredByReferralCode: referredByReferralCode?.trim() || undefined,
                 } as CreateCustomerData);
 
                 if (hasAddressInput) {
@@ -207,10 +183,23 @@ export const CustomerForm = ({
                     }
                 }
 
-                onSuccess("Customer created successfully!");
+                onSuccess(
+                    created.referralCode
+                        ? `Customer created. Referral Code: ${created.referralCode}`
+                        : "Customer created successfully!"
+                );
             }
         } catch (err: any) {
-            toast.error(getApiErrorMessage(err, "Failed to save customer"));
+            const message = getApiErrorMessage(err, "Failed to save customer");
+            // 409 = the server's duplicate-customer rule (same Name + Phone as another customer). Mark
+            // both identity fields so it is clear on the form what to change; nothing was saved.
+            if (err?.response?.status === 409) {
+                setFieldTouched("name", true, false);
+                setFieldTouched("phone", true, false);
+                setFieldError("name", message);
+                setFieldError("phone", message);
+            }
+            toast.error(message);
         } finally {
             setSubmitting(false);
         }
@@ -363,37 +352,66 @@ export const CustomerForm = ({
                             )}
                         </div>
 
-                        {/* Referred By */}
-                        <div>
-                            <Label>Referred By</Label>
-                            <SelectSearchColor
-                                value={values.referralId}
-                                onChange={(v) => setFieldValue("referralId", v || "")}
-                                placeholder={
-                                    customerLoading
-                                        ? "Loading customers..."
-                                        : "Select Customer"
-                                }
-                                options={[
-                                    ...(customers
-                                        ?.filter(
-                                            (c: any) =>
-                                                !isEdit ||
-                                                String(c.id) !== String(customer?.id)
+                        {/* Referral Code — server-generated at creation and permanent. Display only:
+                            not a Formik field, so it is never part of the update payload. */}
+                        {isEdit && (
+                            <div>
+                                <Label htmlFor="referralCode">Referral Code</Label>
+                                <Input
+                                    id="referralCode"
+                                    value={customer?.referralCode || "Not assigned"}
+                                    readOnly
+                                    disabled
+                                    className="font-mono tracking-wider"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Generated automatically. Does not change if name or phone is edited.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Referrer. Add: staff type the REFERRING customer's code; the server resolves it
+                            (unknown codes are ignored). Edit: read-only — the referrer is fixed at creation. */}
+                        {!isEdit ? (
+                            <div>
+                                <Label htmlFor="referredByReferralCode">Referred By Referral Code</Label>
+                                <Field
+                                    id="referredByReferralCode"
+                                    as={Input}
+                                    name="referredByReferralCode"
+                                    placeholder="Optional, e.g. VEDAABCT9999"
+                                    maxLength={REFERRAL_CODE_MAX_LENGTH}
+                                    className="font-mono uppercase"
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                        setFieldValue(
+                                            "referredByReferralCode",
+                                            alphanumericUpper(e.target.value, REFERRAL_CODE_MAX_LENGTH)
                                         )
-                                        .map((c: any) => ({
-                                            value: String(c.id),
-                                            label: `${c.id} | ${c.name} | ${c.phone} | ${c.email ?? ""}`,
-                                        })) || []),
-                                ]}
-                                disabled={customerLoading}
-                                emptyStateColor="orange"
-                                selectedStateColor="green"
-                            />
-                            {touched.referralId && (
-                                <ErrorText error={errors.referralId as string} />
-                            )}
-                        </div>
+                                    }
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Optional. The code of the customer who referred them — not this customer's own code.
+                                </p>
+                            </div>
+                        ) : (
+                            <div>
+                                <Label htmlFor="referredBy">Referred By</Label>
+                                <Input
+                                    id="referredBy"
+                                    value={
+                                        customer?.referredBy
+                                            ? `${customer.referredBy.name}${
+                                                  customer.referredBy.referralCode
+                                                      ? ` — ${customer.referredBy.referralCode}`
+                                                      : ""
+                                              }`
+                                            : "—"
+                                    }
+                                    readOnly
+                                    disabled
+                                />
+                            </div>
+                        )}
 
                         <div className="space-y-2">
                             <Label htmlFor="isActive">Status</Label>
