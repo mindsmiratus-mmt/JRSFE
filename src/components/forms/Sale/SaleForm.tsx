@@ -12,7 +12,8 @@ import { useCart, useGetCart } from "@/hooks/useCart";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAllLookUp } from "@/hooks/useLookup";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
-import { useAllCustomer, useCreateCustomer } from "@/hooks/useCustomer";
+import { useAllCustomer, useCreateCustomer, REFERRAL_CODE_MAX_LENGTH } from "@/hooks/useCustomer";
+import { alphanumericUpper, getApiErrorMessage } from "@/utils/formInput";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Select,
@@ -335,7 +336,7 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
     city: "",
     state: "",
     pinCode: "",
-    referralId: "",
+    referredByReferralCode: "",
   });
 
   const [isBulkItemModalOpen, setIsBulkItemModalOpen] = useState(false);
@@ -643,11 +644,14 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
       ...newCustomer,
       dateOfBirth: newCustomer.dateOfBirth ? new Date(newCustomer.dateOfBirth).toISOString() : undefined,
       isActive: true,
-      referralId: newCustomer.referralId ? Number(newCustomer.referralId) : 0,
-      referredBy: "",
+      referredByReferralCode: newCustomer.referredByReferralCode.trim() || undefined,
     } as any, {
       onSuccess: (data) => {
-        toast.success("Customer created successfully");
+        toast.success(
+          data.referralCode
+            ? `Customer created. Referral Code: ${data.referralCode}`
+            : "Customer created successfully"
+        );
         queryClient.invalidateQueries({ queryKey: ['all_customer'] });
         setCustomerId(String(data.id));
         setIsCustomerModalOpen(false);
@@ -664,11 +668,13 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
           city: "",
           state: "",
           pinCode: "",
-          referralId: ""
+          referredByReferralCode: ""
         });
       },
       onError: (err: any) => {
-        toast.error(err?.response?.data?.message || "Failed to create customer");
+        // Reads every API error shape — incl. the middleware's { error } body used for the 409
+        // duplicate-customer response, which data.message alone missed.
+        toast.error(getApiErrorMessage(err, "Failed to create customer"));
       }
     });
   };
@@ -2351,21 +2357,21 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
                   />
                 </div>
 
-                {/* Referral */}
+                {/* Referral — the REFERRING customer's code; the server resolves it (unknown codes ignored) */}
                 <div>
-                  <Label className="text-sm font-semibold text-gray-700">Referred By</Label>
-                  <div className="mt-1.5">
-                    <SearchableSelect
-                      value={newCustomer.referralId}
-                      onChange={(v: any) => setNewCustomer({ ...newCustomer, referralId: v ? String(v) : "" })}
-                      placeholder={customerLoading ? "Loading..." : "Search Customer"}
-                      options={customers?.map((c: any) => ({
-                        value: String(c.id),
-                        label: `${c.id} | ${c.name} | ${c.phone}`
-                      })) || []}
-                      disabled={customerLoading}
-                    />
-                  </div>
+                  <Label className="text-sm font-semibold text-gray-700">Referred By Referral Code</Label>
+                  <Input
+                    value={newCustomer.referredByReferralCode}
+                    onChange={(e) =>
+                      setNewCustomer({
+                        ...newCustomer,
+                        referredByReferralCode: alphanumericUpper(e.target.value, REFERRAL_CODE_MAX_LENGTH),
+                      })
+                    }
+                    maxLength={REFERRAL_CODE_MAX_LENGTH}
+                    placeholder="Optional, e.g. VEDAABCT9999"
+                    className="mt-1.5 font-mono uppercase"
+                  />
                 </div>
 
               </div>
@@ -2426,7 +2432,7 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
                   setNewCustomer({
                     name: "", phone: "", email: "", dateOfBirth: "", gender: "",
                     gstin: "", pan: "", adharNo: "", address: "", city: "", state: "", pinCode: "",
-                    referralId: ""
+                    referredByReferralCode: ""
                   });
                 }}
               >
