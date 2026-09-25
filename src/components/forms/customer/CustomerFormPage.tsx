@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { useCustomer } from "@/hooks/useCustomer";
 import { CustomerForm } from "./CustomerForm";
+import { CustomerAddresses } from "./CustomerAddresses";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export const CustomerFormPage = () => {
@@ -82,12 +83,16 @@ export const CustomerFormPage = () => {
                 }
             />
 
-            <div className="max-w-7xl mx-auto p-6">
+            <div className="max-w-7xl mx-auto p-6 space-y-6">
                 <CustomerForm
                     customer={isEditMode ? customer : undefined}
                     onSuccess={handleSuccess}
                     onCancel={handleCancel}
                 />
+
+                {/* The only place an existing customer's addresses are managed. Needs a real
+                    CustomerId, so on Add Customer the form's own address fields seed the first one. */}
+                {isEditMode && customer && <CustomerAddresses customerId={customer.id} customer={customer} />}
             </div>
         </div>
     );

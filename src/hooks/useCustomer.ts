@@ -100,12 +100,14 @@ export const useCustomer = (id: number | null) => {
 };
 
 // 3. Create Customer
+// Backend returns { id } (not the full Customer) so callers can chain a follow-up call —
+// e.g. creating the customer's default CustomerAddress — without a second lookup.
 export const useCreateCustomer = () => {
     const queryClient = useQueryClient();
 
-    return useMutation<Customer, Error, CreateCustomerData>({
+    return useMutation<{ id: number }, Error, CreateCustomerData>({
         mutationFn: async (payload) => {
-            const { data } = await api.post<Customer>('/Customer', payload);
+            const { data } = await api.post<{ id: number }>('/Customer', payload);
             return data;
         },
         onSuccess: () => {

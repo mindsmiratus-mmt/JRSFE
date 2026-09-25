@@ -21,13 +21,26 @@ import {
     type CreateCustomerData,
     type UpdateCustomerData,
 } from "@/hooks/useCustomer";
+import { useCreateCustomerAddress } from "@/hooks/useCustomerAddress";
 import { SelectSearchColor } from "@/components/ui/SelectSearchColor";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { alphanumericUpper, digitsOnly, getApiErrorMessage } from "@/utils/formInput";
+import { ADDRESS_MAX } from "./CustomerAddresses";
 
 // ========================
 // Validation Schema
 // ========================
+// Add Customer only: the optional address fields become the customer's first CustomerAddress,
+// whose API requires Address/City/State/PIN together — so once any one is filled, all four are.
+const ADDRESS_FIELDS = ["address", "city", "state", "pinCode"] as const;
+const hasAnyAddress = (values: Record<string, any>) =>
+    ADDRESS_FIELDS.some((f) => String(values?.[f] ?? "").trim() !== "");
+const requiredWithAddress = (message: string) =>
+    Yup.string().test("required-with-address", message, function (value) {
+        return !hasAnyAddress(this.parent) || String(value ?? "").trim() !== "";
+    });
+
 const CustomerSchema = Yup.object().shape({
     name: Yup.string().trim().min(2).required("Name is required"),
     phone: Yup.string()
@@ -38,11 +51,6 @@ const CustomerSchema = Yup.object().shape({
         .nullable()
         .max(new Date(), "Date of birth cannot be in the future"),
     // gender: Yup.string().required("Gender is required"),
-    address: Yup.string(),
-    city: Yup.string(),
-    state: Yup.string(),
-    pinCode: Yup.string()
-        .matches(/^\d{6}$/, "PIN code must be 6 digits"),
     gstin: Yup.string()
         .matches(
             /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/,
@@ -56,6 +64,14 @@ const CustomerSchema = Yup.object().shape({
         .matches(/^\d{12}$/, "Aadhaar must be 12 digits")
         .optional(),
     referralId: Yup.string().optional(),
+});
+
+const CreateCustomerSchema = CustomerSchema.shape({
+    address: requiredWithAddress("Address is required when adding an address").max(ADDRESS_MAX.addressLine1),
+    city: requiredWithAddress("City is required when adding an address").max(ADDRESS_MAX.city),
+    state: requiredWithAddress("State is required when adding an address").max(ADDRESS_MAX.state),
+    pinCode: requiredWithAddress("PIN code is required when adding an address")
+        .matches(/^\d{6}$/, { message: "PIN code must be 6 digits", excludeEmptyString: true }),
 });
 
 // ========================
@@ -76,6 +92,7 @@ export const CustomerForm = ({
     const createMutation = useCreateCustomer();
     const { data: customers = [], isLoading: customerLoading } = useAllCustomer();
     const updateMutation = useUpdateCustomer();
+    const createAddressMutation = useCreateCustomerAddress();
 
     const initialValues = {
         name: customer?.name || "",
@@ -86,10 +103,12 @@ export const CustomerForm = ({
         gstin: customer?.gstin || "",
         pan: customer?.pan || "",
         adharNo: customer?.adharNo || "",
-        address: customer?.address || "",
-        city: customer?.city || "",
-        state: customer?.state || "",
-        pinCode: customer?.pinCode || "",
+        // Address inputs exist only on Add Customer (they seed the first CustomerAddress). On Edit,
+        // addresses are managed exclusively in the Saved Addresses section.
+        address: "",
+        city: "",
+        state: "",
+        pinCode: "",
         referralId: customer?.referralId || "",
         isActive: customer?.isActive ?? true,
     };
@@ -120,8 +139,9 @@ export const CustomerForm = ({
             }
         }
 
-        const payload: CreateCustomerData | UpdateCustomerData = {
-            ...values,
+        const { address, city, state, pinCode, ...customerValues } = values;
+        const customerPayload = {
+            ...customerValues,
             referralId: values.referralId || undefined,
             dateOfBirth: values.dateOfBirth
                 ? new Date(values.dateOfBirth).toISOString()
@@ -129,19 +149,68 @@ export const CustomerForm = ({
             isActive: values.isActive ?? true,
         };
 
+        // Add Customer: the address inputs seed the first CustomerAddress (validated as a complete
+        // set by CreateCustomerSchema). On Edit there are no address inputs at all.
+        const hasAddressInput = !isEdit && hasAnyAddress(values);
+
         try {
             if (isEdit) {
-                await updateMutation.mutateAsync({
+                // PUT /api/Customer/{id} overwrites every column, including the legacy
+                // Address/City/State/PinCode. They are no longer edited here, so echo the stored
+                // values back unchanged — omitting them would wipe legacy data. Saved addresses are
+                // changed only through the Saved Addresses section (address API).
+                const data: UpdateCustomerData = {
+                    ...customerPayload,
                     id: customer.id,
-                    data: { ...payload, id: customer.id },
-                });
+                    address: customer.address ?? null,
+                    city: customer.city ?? null,
+                    state: customer.state ?? null,
+                    pinCode: customer.pinCode ?? null,
+                };
+                await updateMutation.mutateAsync({ id: customer.id, data });
+
                 onSuccess("Customer updated successfully!");
             } else {
-                await createMutation.mutateAsync(payload as CreateCustomerData);
+                // The legacy Customer address columns still receive the same values as a
+                // compatibility mirror: the invoice PDF picks CGST+SGST vs IGST from live
+                // Customer.State, and the customer list displays the legacy columns. The saved
+                // CustomerAddress created below is the address record checkout snapshots from.
+                const created = await createMutation.mutateAsync({
+                    ...customerPayload,
+                    address,
+                    city,
+                    state,
+                    pinCode,
+                } as CreateCustomerData);
+
+                if (hasAddressInput) {
+                    try {
+                        await createAddressMutation.mutateAsync({
+                            customerId: created.id,
+                            data: {
+                                recipientName: values.name,
+                                phone: values.phone,
+                                addressLine1: address.trim(),
+                                city: city.trim(),
+                                state: state.trim(),
+                                pinCode,
+                            },
+                        });
+                    } catch (addrErr: any) {
+                        // The customer itself is saved; say so, and include why the address failed.
+                        toast.error(
+                            `Customer was created, but the address could not be saved (${getApiErrorMessage(
+                                addrErr,
+                                "unknown error"
+                            )}). Add it from Saved Addresses.`
+                        );
+                    }
+                }
+
                 onSuccess("Customer created successfully!");
             }
         } catch (err: any) {
-            toast.error(err?.response?.data?.message || "Failed to save customer");
+            toast.error(getApiErrorMessage(err, "Failed to save customer"));
         } finally {
             setSubmitting(false);
         }
@@ -155,7 +224,7 @@ export const CustomerForm = ({
     return (
         <Formik
             initialValues={initialValues}
-            validationSchema={CustomerSchema}
+            validationSchema={isEdit ? CustomerSchema : CreateCustomerSchema}
             onSubmit={handleSubmit}
             enableReinitialize
         >
@@ -186,6 +255,11 @@ export const CustomerForm = ({
                                 placeholder="10-digit mobile number"
                                 as={Input}
                                 name="phone"
+                                inputMode="numeric"
+                                maxLength={10}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                    setFieldValue("phone", digitsOnly(e.target.value, 10))
+                                }
                             />
                             {touched.phone && (
                                 <ErrorText error={errors.phone as string} />
@@ -244,7 +318,15 @@ export const CustomerForm = ({
                                 placeholder="22AAAAA0000A1Z5"
                                 as={Input}
                                 name="gstin"
+                                maxLength={15}
+                                className="uppercase"
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                    setFieldValue("gstin", alphanumericUpper(e.target.value, 15))
+                                }
                             />
+                            {touched.gstin && (
+                                <ErrorText error={errors.gstin as string} />
+                            )}
                         </div>
 
                         <div>
@@ -253,7 +335,15 @@ export const CustomerForm = ({
                                 placeholder="ABCDE1234F"
                                 as={Input}
                                 name="pan"
+                                maxLength={10}
+                                className="uppercase"
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                    setFieldValue("pan", alphanumericUpper(e.target.value, 10))
+                                }
                             />
+                            {touched.pan && (
+                                <ErrorText error={errors.pan as string} />
+                            )}
                         </div>
 
                         <div>
@@ -262,7 +352,15 @@ export const CustomerForm = ({
                                 placeholder="12-digit Aadhaar number"
                                 as={Input}
                                 name="adharNo"
+                                inputMode="numeric"
+                                maxLength={12}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                    setFieldValue("adharNo", digitsOnly(e.target.value, 12))
+                                }
                             />
+                            {touched.adharNo && (
+                                <ErrorText error={errors.adharNo as string} />
+                            )}
                         </div>
 
                         {/* Referred By */}
@@ -296,49 +394,6 @@ export const CustomerForm = ({
                                 <ErrorText error={errors.referralId as string} />
                             )}
                         </div>
-                    </div>
-
-                    {/* Address */}
-                    <div>
-                        <Label>Address</Label>
-                        <Field
-                            as={Input}
-                            name="address"
-                            placeholder="House no, street, area"
-                        />
-                        {touched.address && (
-                            <ErrorText error={errors.address as string} />
-                        )}
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                            <Label>City</Label>
-                            <Field placeholder="City" as={Input} name="city" />
-                            {touched.city && (
-                                <ErrorText error={errors.city as string} />
-                            )}
-                        </div>
-
-                        <div>
-                            <Label>State</Label>
-                            <Field placeholder="State" as={Input} name="state" />
-                            {touched.state && (
-                                <ErrorText error={errors.state as string} />
-                            )}
-                        </div>
-
-                        <div>
-                            <Label>PIN Code</Label>
-                            <Field
-                                placeholder="6-digit PIN code"
-                                as={Input}
-                                name="pinCode"
-                            />
-                            {touched.pinCode && (
-                                <ErrorText error={errors.pinCode as string} />
-                            )}
-                        </div>
 
                         <div className="space-y-2">
                             <Label htmlFor="isActive">Status</Label>
@@ -354,6 +409,60 @@ export const CustomerForm = ({
                             </div>
                         </div>
                     </div>
+
+                    {/* Initial address — Add Customer only. Saved as the customer's first (default)
+                        CustomerAddress; on Edit, addresses are managed in Saved Addresses below. */}
+                    {!isEdit && (
+                        <>
+                            <div>
+                                <Label>Address</Label>
+                                <Field
+                                    as={Input}
+                                    name="address"
+                                    placeholder="House no, street, area"
+                                    maxLength={ADDRESS_MAX.addressLine1}
+                                />
+                                {touched.address && (
+                                    <ErrorText error={errors.address as string} />
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <Label>City</Label>
+                                    <Field placeholder="City" as={Input} name="city" maxLength={ADDRESS_MAX.city} />
+                                    {touched.city && (
+                                        <ErrorText error={errors.city as string} />
+                                    )}
+                                </div>
+
+                                <div>
+                                    <Label>State</Label>
+                                    <Field placeholder="State" as={Input} name="state" maxLength={ADDRESS_MAX.state} />
+                                    {touched.state && (
+                                        <ErrorText error={errors.state as string} />
+                                    )}
+                                </div>
+
+                                <div>
+                                    <Label>PIN Code</Label>
+                                    <Field
+                                        placeholder="6-digit PIN code"
+                                        as={Input}
+                                        name="pinCode"
+                                        inputMode="numeric"
+                                        maxLength={6}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                            setFieldValue("pinCode", digitsOnly(e.target.value, 6))
+                                        }
+                                    />
+                                    {touched.pinCode && (
+                                        <ErrorText error={errors.pinCode as string} />
+                                    )}
+                                </div>
+                            </div>
+                        </>
+                    )}
 
                     {/* Desktop actions */}
                     <div className="hidden justify-end gap-4 pt-6 border-t md:flex">
