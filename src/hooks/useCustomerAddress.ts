@@ -20,6 +20,7 @@ export interface CustomerAddress {
     phone: string;
     addressLine1: string;
     addressLine2?: string | null;
+    landmark?: string | null;
     city: string;
     state: string;
     pinCode: string;
@@ -35,6 +36,8 @@ export interface CustomerAddressInput {
     phone: string;
     addressLine1: string;
     addressLine2?: string;
+    // Sent on every save: PUT replaces the whole address, so omitting it would clear a stored landmark.
+    landmark?: string;
     city: string;
     state: string;
     pinCode: string;
