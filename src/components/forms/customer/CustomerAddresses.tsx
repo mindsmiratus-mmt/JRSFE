@@ -40,6 +40,7 @@ export const ADDRESS_MAX = {
     recipientName: 200,
     addressLine1: 300,
     addressLine2: 300,
+    landmark: 200,
     city: 100,
     state: 100,
     country: 100,
@@ -53,6 +54,7 @@ const AddressSchema = Yup.object().shape({
         .required("Phone is required"),
     addressLine1: Yup.string().trim().max(ADDRESS_MAX.addressLine1).required("Address is required"),
     addressLine2: Yup.string().max(ADDRESS_MAX.addressLine2).optional(),
+    landmark: Yup.string().max(ADDRESS_MAX.landmark).optional(),
     city: Yup.string().trim().max(ADDRESS_MAX.city).required("City is required"),
     state: Yup.string().trim().max(ADDRESS_MAX.state).required("State is required"),
     pinCode: Yup.string().matches(/^\d{6}$/, "PIN code must be 6 digits").required("PIN code is required"),
@@ -65,6 +67,7 @@ const emptyValues: CustomerAddressInput = {
     phone: "",
     addressLine1: "",
     addressLine2: "",
+    landmark: "",
     city: "",
     state: "",
     pinCode: "",
@@ -132,6 +135,7 @@ export const CustomerAddresses = ({ customerId, customer }: CustomerAddressesPro
               phone: editingAddress.phone,
               addressLine1: editingAddress.addressLine1,
               addressLine2: editingAddress.addressLine2 || "",
+              landmark: editingAddress.landmark || "",
               city: editingAddress.city,
               state: editingAddress.state,
               pinCode: editingAddress.pinCode,
@@ -285,6 +289,7 @@ export const CustomerAddresses = ({ customerId, customer }: CustomerAddressesPro
                             <p className="text-sm">
                                 {address.addressLine1}
                                 {address.addressLine2 ? `, ${address.addressLine2}` : ""}
+                                {address.landmark ? ` (Landmark: ${address.landmark})` : ""}
                             </p>
                             <p className="text-sm text-muted-foreground">
                                 {address.city}, {address.state} - {address.pinCode}, {address.country}
@@ -366,11 +371,23 @@ export const CustomerAddresses = ({ customerId, customer }: CustomerAddressesPro
                                     <Field
                                         as={Input}
                                         name="addressLine2"
-                                        placeholder="Landmark, apartment (optional)"
+                                        placeholder="Apartment, floor (optional)"
                                         maxLength={ADDRESS_MAX.addressLine2}
                                     />
                                     {touched.addressLine2 && (
                                         <p className="text-sm text-red-500">{errors.addressLine2 as string}</p>
+                                    )}
+                                </div>
+                                <div>
+                                    <Label>Landmark</Label>
+                                    <Field
+                                        as={Input}
+                                        name="landmark"
+                                        placeholder="Near City Mall (optional)"
+                                        maxLength={ADDRESS_MAX.landmark}
+                                    />
+                                    {touched.landmark && (
+                                        <p className="text-sm text-red-500">{errors.landmark as string}</p>
                                     )}
                                 </div>
                                 <div className="grid grid-cols-3 gap-4">
@@ -449,7 +466,7 @@ export const CustomerAddresses = ({ customerId, customer }: CustomerAddressesPro
             <ConfirmDialog
                 open={deleteId !== null}
                 title="Delete Address?"
-                message="This action cannot be undone. Deleting the default address does not automatically promote another one."
+                message="This action cannot be undone. If this is the default address, the most recently added remaining address becomes the default."
                 onConfirm={confirmDelete}
                 onCancel={() => setDeleteId(null)}
                 confirmText="Delete"
