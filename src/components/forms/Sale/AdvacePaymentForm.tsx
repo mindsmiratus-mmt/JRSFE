@@ -24,6 +24,7 @@ import {
   Scale,
   Gem,
   Pencil,
+  Receipt,
 } from "lucide-react";
 import {
   Dialog,
@@ -37,6 +38,7 @@ import {
   useOrder,
   useCompleteAdvance,
   useEditAdvanceOrder,
+  useAdvanceReceiptPdf,
 } from "@/hooks/useOrder";
 import { useAllLookUp } from "@/hooks/useLookup";
 import { useWalletByCustomerId } from "@/hooks/useWallet";
@@ -341,6 +343,7 @@ export default function CompleteAdvanceOrderPage() {
   const completeAdvanceMutation = useCompleteAdvance();
   const invoicePdfMutation = useInvoicePdf();
   const editAdvanceMutation = useEditAdvanceOrder();
+  const advanceReceiptMutation = useAdvanceReceiptPdf();
 
   const [walletRedeem, setWalletRedeem] = useState("0");
   const [adjustAmount, setAdjustAmount] = useState("0");
@@ -369,6 +372,12 @@ export default function CompleteAdvanceOrderPage() {
   const advanceAmount = num(order?.advanceAmount);
   const finalGrandTotal =
     num(cart?.grandTotal ?? cart?.GrandTotal) || num(order?.totalAmount);
+  // The advance already covers the order: there is nothing to collect on this form, which only
+  // records the BALANCE payment (the advance payment itself is on the Advance Receipt).
+  const isFullyPaid = balanceAmount <= 0;
+  // Completed or cancelled orders must not be completed again (JRS does not block a Cancelled one).
+  const isNotCompletable =
+    order?.status === "Closed" || order?.status === "Cancelled" || !!order?.invoiceId;
 
   const cartItems: CartItem[] = useMemo(() => {
     return (cart?.items ?? cart?.Items ?? []) as CartItem[];
@@ -636,7 +645,26 @@ const caratToGram = (carat: number) => carat * 0.2;
     setTimeout(() => window.URL.revokeObjectURL(url), 60000);
   };
 
+  const handleViewAdvanceReceipt = () => {
+    if (!orderId) return;
+
+    toast.success("Generating advance receipt PDF, please wait...");
+    advanceReceiptMutation.mutate(orderId, {
+      onSuccess: (blobData) => {
+        downloadPdfBlob(blobData, `advance-receipt-${orderId}.pdf`);
+      },
+      onError: () => {
+        toast.error("Failed to generate advance receipt PDF. Please try again.");
+      },
+    });
+  };
+
   const handleFinalizePaymentClick = () => {
+    if (isNotCompletable) {
+      toast.error("This advance order is already completed or cancelled.");
+      return;
+    }
+
     if (!orderId) {
       toast.error("Order ID is missing. Cannot complete advance payment.");
       return;
@@ -681,7 +709,7 @@ const caratToGram = (carat: number) => carat * 0.2;
   };
 
   const handleConfirmCompleteAdvancePayment = () => {
-    if (!orderId || !pendingPaymentPayload) return;
+    if (!orderId || !pendingPaymentPayload || isNotCompletable) return;
 
     setIsPaymentConfirmOpen(false);
 
@@ -973,6 +1001,22 @@ const caratToGram = (carat: number) => carat * 0.2;
             </div>
 
             <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleViewAdvanceReceipt}
+              disabled={advanceReceiptMutation.isPending}
+              className="h-10 border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+            >
+              {advanceReceiptMutation.isPending ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <Receipt className="mr-1.5 h-4 w-4" />
+              )}
+              View Advance Receipt
+            </Button>
+
+            <Button
               variant="outline"
               size="sm"
               onClick={() => navigate("/admin/sale")}
@@ -1036,6 +1080,7 @@ const caratToGram = (carat: number) => carat * 0.2;
                   {cartItems.length} item{cartItems.length > 1 ? "s" : ""}
                 </span>
 
+                {!isNotCompletable && (
                 <Button
                   type="button"
                   variant="outline"
@@ -1046,6 +1091,7 @@ const caratToGram = (carat: number) => carat * 0.2;
                   <Pencil className="mr-1.5 h-3.5 w-3.5" />
                   Edit Items
                 </Button>
+                )}
               </div>
             </div>
 
@@ -1185,6 +1231,28 @@ const caratToGram = (carat: number) => carat * 0.2;
           </div>
         )}
 
+        {isNotCompletable ? (
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <CheckCircle2 className="h-5 w-5 text-slate-600" />
+            {order.status === "Cancelled"
+              ? "This advance order has been cancelled."
+              : "This advance order is already completed."}
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            No further payment can be collected and it cannot be completed again.
+          </p>
+          <Button
+            variant="outline"
+            className="mt-4 border-gray-300 text-gray-600 hover:bg-gray-50"
+            onClick={() => navigate("/admin/sale")}
+          >
+            Back to Sales
+          </Button>
+        </div>
+        ) : (
+        <>
+        {!isFullyPaid && (
         <div className="mb-6 mt-6">
           <Label className="mb-2 block text-sm font-semibold text-gray-700">
             Wallet Redeem Amount (optional)
@@ -1203,13 +1271,28 @@ const caratToGram = (carat: number) => carat * 0.2;
             />
           </div>
         </div>
+        )}
 
-        <div className="space-y-4">
+        <div className={`space-y-4 ${isFullyPaid ? "mt-6" : ""}`}>
           <h4 className="mb-2 flex items-center gap-2 text-lg font-bold text-gray-800">
             <Banknote className="h-5 w-5 text-indigo-600" />
-            Split & Finalize Payment
+            {isFullyPaid ? "Finalize Advance Order" : "Split & Finalize Payment"}
           </h4>
 
+          {isFullyPaid ? (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-green-800">
+                <CheckCircle2 className="h-5 w-5 text-green-600" />
+                Fully paid — no balance to collect
+              </p>
+              <p className="mt-1 text-sm text-green-700">
+                The advance payment already covers the full amount. Completing the order
+                generates the invoice; no further payment is taken. Use “View Advance
+                Receipt” to see how the advance was paid.
+              </p>
+            </div>
+          ) : (
+          <>
           <div className="space-y-3">
             {paymentsList.map((p) => {
               const paymentUi = getPaymentUi(p.method);
@@ -1401,7 +1484,7 @@ const caratToGram = (carat: number) => carat * 0.2;
 
               <div className="text-sm">
                 <div>
-                  <span className="mr-2 text-gray-500">Total Paid:</span>
+                  <span className="mr-2 text-gray-500">Collecting Now:</span>
                   <span className="font-bold text-gray-800">
                     ₹
                     {currentTotalPaid.toLocaleString(undefined, {
@@ -1527,6 +1610,8 @@ const caratToGram = (carat: number) => carat * 0.2;
               </div>
             </div>
           )}
+          </>
+          )}
 
           <div className="mt-4 flex flex-col gap-4 border-t border-gray-100 pt-4 sm:flex-row">
             <Button
@@ -1537,7 +1622,7 @@ const caratToGram = (carat: number) => carat * 0.2;
               {completeAdvanceMutation.isPending ? (
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
               ) : null}
-              Confirm Payment
+              {isFullyPaid ? "Complete Advance Order" : "Confirm Payment"}
             </Button>
 
             <Button
@@ -1549,6 +1634,8 @@ const caratToGram = (carat: number) => carat * 0.2;
             </Button>
           </div>
         </div>
+        </>
+        )}
       </div>
 
       <Dialog open={isPaymentConfirmOpen} onOpenChange={setIsPaymentConfirmOpen}>
@@ -1562,10 +1649,12 @@ const caratToGram = (carat: number) => carat * 0.2;
 
           <div className="py-4 text-sm text-gray-600">
             <p className="mb-4">
-              Are you sure you want to complete this advance order? This will
-              settle the remaining balance and finalize the transaction.
+              {isFullyPaid
+                ? "This order is fully paid by its advance. Completing it generates the invoice; no further payment is collected."
+                : "Are you sure you want to complete this advance order? This will settle the remaining balance and finalize the transaction."}
             </p>
 
+            {!isFullyPaid && (
             <div className="flex flex-col gap-2 rounded-lg border border-green-100 bg-green-50 p-4">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-green-800">
@@ -1615,6 +1704,7 @@ const caratToGram = (carat: number) => carat * 0.2;
                 </span>
               </div>
             </div>
+            )}
           </div>
 
           <DialogFooter className="mt-2 flex justify-end gap-2">

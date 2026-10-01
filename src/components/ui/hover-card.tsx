@@ -219,6 +219,29 @@ interface OrderItemsHoverCardProps {
   grandTotal: number;
 }
 
+/** A customer-selected option (e.g. Size = 18) as stored on the order's cart snapshot
+ * (POST /api/Order/list → cartData.items[].selectedProperties). */
+interface SelectedProperty {
+  name: string;
+  value: string;
+}
+
+/** Only pairs with a non-empty name and value are shown. */
+const isSelectedProperty = (p: unknown): p is SelectedProperty => {
+  const { name, value } = (p ?? {}) as Partial<Record<keyof SelectedProperty, unknown>>;
+  return (
+    typeof name === "string" &&
+    typeof value === "string" &&
+    name.trim() !== "" &&
+    value.trim() !== ""
+  );
+};
+
+const getSelectedProperties = (item: { selectedProperties?: unknown }): SelectedProperty[] =>
+  Array.isArray(item?.selectedProperties)
+    ? item.selectedProperties.filter(isSelectedProperty)
+    : [];
+
 const OrderItemsHoverCard = ({
   items,
   orderNo,
@@ -250,6 +273,7 @@ const OrderItemsHoverCard = ({
           <div className="p-4 space-y-4">
             {items.map((item: any, idx: number) => {
               const metals = getMetalDetails(item);
+              const selectedProperties = getSelectedProperties(item);
               return (
                 <div
                   key={idx}
@@ -266,6 +290,18 @@ const OrderItemsHoverCard = ({
                         Tag: {item.tagNumber}
                         {item.huid ? ` | HUID: ${item.huid}` : ""}
                       </p>
+                      {selectedProperties.length > 0 && (
+                        <div className="mt-1.5 text-xs text-gray-700">
+                          <p className="text-[11px] text-gray-400 uppercase tracking-wide">
+                            Selected Properties
+                          </p>
+                          {selectedProperties.map((p, i) => (
+                            <p key={i}>
+                              {p.name}: {p.value}
+                            </p>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <span className="font-mono font-bold">
                       ₹
