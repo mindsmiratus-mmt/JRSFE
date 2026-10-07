@@ -182,7 +182,7 @@ export const EmailTemplateFormPage = () => {
 
   return (
     <div className="min-h-full bg-gray-50">
-      <PageHeader
+      <PageHeader fullWidth
         title={isEdit ? `Edit Email Template - ${template?.templateName}` : "New Email Template"}
         subtitle={isEdit ? `${templateKey} · v${version}`
           : template ? `Duplicate of ${template.templateKey} — inactive until you switch it on. Change the key and name, preview, then save.`
@@ -202,7 +202,7 @@ export const EmailTemplateFormPage = () => {
         }
       />
 
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+      <div className="w-full p-4 sm:p-6 space-y-6">
         {errors.length > 0 && (
           <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             <ul className="list-disc pl-5 space-y-1">{errors.map((e) => <li key={e}>{e}</li>)}</ul>

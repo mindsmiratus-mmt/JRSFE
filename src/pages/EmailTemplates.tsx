@@ -63,7 +63,7 @@ export const EmailTemplates = () => {
 
   return (
     <div className="min-h-full bg-gray-50">
-      <PageHeader
+      <PageHeader fullWidth
         title="Email Templates"
         subtitle="Email content used by the application. Exactly one active template per Use For is sent."
         icon={<Mail className="w-7 h-7 text-[#b08d28]" />}
@@ -73,7 +73,7 @@ export const EmailTemplates = () => {
           </Button>
         }
       />
-      <div className="max-w-7xl mx-auto p-6">
+      <div className="w-full p-4 sm:p-6">
         {isError ? (
           <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Email templates could not be loaded.</div>
         ) : (

@@ -9,6 +9,8 @@ interface PageHeaderProps {
     backUrl?: string
     onBack?: () => void
     rightActions?: ReactNode
+    /** Use the full content width instead of the centered max-w-7xl column. */
+    fullWidth?: boolean
 }
 
 export const PageHeader = ({
@@ -18,10 +20,11 @@ export const PageHeader = ({
     backUrl,
     onBack,
     rightActions,
+    fullWidth = false,
 }: PageHeaderProps) => {
     return (
         <div className="bg-white shadow-sm border-b sticky top-0 z-10">
-            <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 space-y-3">
+            <div className={`${fullWidth ? "w-full" : "max-w-7xl mx-auto"} px-4 md:px-6 py-4 space-y-3`}>
 
                 {/* Back button */}
                 {(backUrl || onBack) && (
