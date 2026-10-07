@@ -24,15 +24,27 @@ export const wrapInBlock = (text: string, start: number, end: number, name: stri
 };
 
 /**
- * Names among `available` whose tokens ({{Name}}, {{#Name}}, {{/Name}}) appear in `text` but are not `selected`.
- * Used to block Save before JRS rejects it — tokens are never removed automatically.
+ * Scans subject + HTML for tokens ({{Name}}, {{#Name}}, {{/Name}}), mirroring JRS detection:
+ * - used: parameters of the UseFor registry (`available`, in registry order) that appear, each once;
+ * - unknown: well-formed names the UseFor does not supply;
+ * - malformed: anything else between {{ and }}.
+ * The registry comes from JRS — nothing here is hardcoded. JRS re-derives and validates on save.
  */
-export const unselectedTokens = (text: string, available: string[], selected: Set<string>) => {
-    const found = new Set<string>();
-    for (const match of text.matchAll(/\{\{[#/]?([A-Za-z][A-Za-z0-9]*)\}\}/g)) {
-        if (available.includes(match[1]) && !selected.has(match[1])) found.add(match[1]);
+export const scanTokens = (texts: string[], available: string[]) => {
+    const names = new Set<string>();
+    const malformed = new Set<string>();
+    for (const text of texts) {
+        for (const match of text.matchAll(/\{\{([^{}]*)\}\}/g)) {
+            const token = /^[#/]?([A-Za-z][A-Za-z0-9]*)$/.exec(match[1]);
+            if (token) names.add(token[1]);
+            else malformed.add(match[0]);
+        }
     }
-    return [...found];
+    return {
+        used: available.filter((n) => names.has(n)),
+        unknown: [...names].filter((n) => !available.includes(n)),
+        malformed: [...malformed],
+    };
 };
 
 /** The `errors` / `message` of a JRS 400/409 response, for display. */

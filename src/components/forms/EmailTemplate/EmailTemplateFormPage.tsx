@@ -22,7 +22,7 @@ import {
   type EmailTemplateParameter,
   type EmailTemplatePreview,
 } from "@/hooks/useEmailTemplate";
-import { apiErrors, apiStatus, insertAtSelection, tokenFor, unselectedTokens, wrapInBlock } from "@/utils/emailTemplate";
+import { apiErrors, apiStatus, insertAtSelection, scanTokens, tokenFor, wrapInBlock } from "@/utils/emailTemplate";
 import { EmailPreviewDialog } from "./EmailPreviewDialog";
 
 type Field = "subject" | "html";
@@ -50,8 +50,11 @@ export const EmailTemplateFormPage = () => {
   const [htmlBody, setHtmlBody] = useState("");
   const [isActive, setIsActive] = useState(false);
   const [version, setVersion] = useState(1);
-  /** Selected parameters → their per-template Required flag. Not selected = not in ParameterJson. */
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  /**
+   * Required flag chosen per parameter. Which parameters the template uses is NOT stored here — it is detected from the
+   * Subject/HTML tokens. A flag is kept while its token is temporarily absent (e.g. mid-typing); only detected ones are sent.
+   */
+  const [required, setRequiredFlags] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<string[]>([]);
   const [conflict, setConflict] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -69,7 +72,7 @@ export const EmailTemplateFormPage = () => {
     setHtmlBody(t.htmlBody);
     setIsActive(t.isActive);
     setVersion(t.version);
-    setSelected(Object.fromEntries(t.parameters.map((p) => [p.name, p.required])));
+    setRequiredFlags(Object.fromEntries(t.parameters.map((p) => [p.name, p.required])));
     setErrors([]);
     setConflict(false);
   };
@@ -91,23 +94,17 @@ export const EmailTemplateFormPage = () => {
   }, [isEdit, useFor, useFors]);
 
   const registry = useMemo(() => useFors.find((u) => u.key === useFor), [useFors, useFor]);
-  const parameters: EmailTemplateParameter[] = (registry?.parameters ?? [])
-    .filter((p) => p.name in selected)
-    .map((p) => ({ name: p.name, type: p.type, required: selected[p.name] }));
+  const available = registry?.parameters ?? [];
+  const tokens = scanTokens([mailSubject, htmlBody], available.map((p) => p.name));
+  /** Detected parameters (registry order, registry type); a newly detected one is optional until marked Required. */
+  const detected = available.filter((p) => tokens.used.includes(p.name));
+  const parameters: EmailTemplateParameter[] = detected.map((p) => ({ name: p.name, type: p.type, required: !!required[p.name] }));
+  const tokenProblems = [
+    ...tokens.unknown.map((n) => `${n} is not available for this UseFor.`),
+    ...tokens.malformed.map((t) => `Malformed token ${t} — use {{Name}}, {{#Name}} or {{/Name}} with no spaces.`),
+  ];
 
-  /** Tokens still in Subject/HTML whose parameter is not selected — Save is blocked; tokens are never removed silently. */
-  const strayTokens = unselectedTokens(`${mailSubject}\n${htmlBody}`, (registry?.parameters ?? []).map((p) => p.name),
-    new Set(Object.keys(selected)));
-
-  const toggleUse = (name: string) =>
-    setSelected((s) => {
-      const next = { ...s };
-      if (name in next) delete next[name];
-      else next[name] = false; // required is a deliberate per-template choice — never defaulted to true
-      return next;
-    });
-
-  const setRequired = (name: string, required: boolean) => setSelected((s) => ({ ...s, [name]: required }));
+  const setRequired = (name: string, value: boolean) => setRequiredFlags((r) => ({ ...r, [name]: value }));
 
   /** Inserts at the caret of the field last focused (subject or HTML). */
   const insert = (build: (text: string, start: number, end: number) => { text: string; caret: number }) => {
@@ -127,12 +124,12 @@ export const EmailTemplateFormPage = () => {
   const save = async () => {
     setErrors([]);
     setConflict(false);
-    if (strayTokens.length > 0) {
-      setErrors(strayTokens.map((n) =>
-        `${tokenFor(n)} is still used in the Subject or HTML, but ${n} is not a selected parameter. Select ${n} under Parameters, or remove its token.`));
+    if (tokenProblems.length > 0) {
+      setErrors(tokenProblems);
       return;
     }
-    const input ={ templateName, mailSubject, htmlBody, parameters, isActive };
+    // JRS derives the parameter list from the content again; `parameters` carries the Required choices.
+    const input = { templateName, mailSubject, htmlBody, parameters, isActive };
     try {
       if (isEdit) {
         const saved = await update.mutateAsync({ ...input, version });
@@ -217,124 +214,138 @@ export const EmailTemplateFormPage = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* Details + parameters */}
-          <div className="space-y-6 lg:col-span-1">
-            <div className="rounded-lg border bg-white p-5 space-y-4">
-              <div className="space-y-1">
-                <Label htmlFor="templateKey">Template Key</Label>
-                <Input id="templateKey" value={templateKey} disabled={isEdit} placeholder="e.g. CustomerWelcomeV2"
-                  onChange={(e) => setTemplateKey(e.target.value)} />
-                <p className="text-xs text-gray-500">Stable identity; letters, digits, underscore. Cannot be changed later.</p>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="templateName">Template Name</Label>
-                <Input id="templateName" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="useFor">Use For</Label>
-                <select id="useFor" value={useFor} disabled={isEdit}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-60"
-                  onChange={(e) => { setUseFor(e.target.value); setSelected({}); }}>
-                  {useFors.map((u) => <option key={u.key} value={u.key}>{u.displayName} ({u.key})</option>)}
-                </select>
-                <p className="text-xs text-gray-500">The business event that sends this email. Fixed after creation.</p>
-              </div>
-              <div className="flex items-start justify-between gap-3 rounded-md border p-3">
-                <div>
-                  <Label htmlFor="isActive">Active</Label>
-                  <p className="text-xs text-gray-500">Activating replaces the currently active template for this Use For.</p>
-                  {deactivatingActive && (
-                    <p className="mt-1 text-xs font-medium text-amber-700">
-                      With no active template, this email is not sent at all.
-                    </p>
-                  )}
-                </div>
-                <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
-              </div>
-            </div>
-
-            <div className="rounded-lg border bg-white p-5">
-              <div className="mb-1 flex items-baseline justify-between gap-2">
-                <h3 className="font-semibold text-gray-800">Parameters</h3>
-                <span className="text-xs text-gray-600">
-                  {parameters.length} selected of {registry?.parameters.length ?? 0} available
-                </span>
-              </div>
-              <p className="mb-3 text-xs text-gray-500">
-                Supplied by the application for this Use For. Select the ones this template uses and decide, for each, whether
-                it is required (missing required value → the email is not sent). Optional values belong in a block
-                <code className="mx-1">{"{{#Name}}…{{/Name}}"}</code>that disappears when the value is absent; an optional
-                link must be used inside its block.
-              </p>
-              {strayTokens.length > 0 && (
-                <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
-                  Still used in the Subject/HTML but not selected: {strayTokens.map(tokenFor).join(", ")}. Select the
-                  parameter again or remove its token — Save is blocked until then.
-                </div>
+        {/* Details */}
+        <div className="grid grid-cols-1 gap-4 rounded-lg border bg-white p-5 md:grid-cols-2 xl:grid-cols-4">
+          <div className="space-y-1">
+            <Label htmlFor="templateKey">Template Key</Label>
+            <Input id="templateKey" value={templateKey} disabled={isEdit} placeholder="e.g. CustomerWelcomeV2"
+              onChange={(e) => setTemplateKey(e.target.value)} />
+            <p className="text-xs text-gray-500">Stable identity; letters, digits, underscore. Cannot be changed later.</p>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="templateName">Template Name</Label>
+            <Input id="templateName" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="useFor">Use For</Label>
+            <select id="useFor" value={useFor} disabled={isEdit}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-60"
+              onChange={(e) => setUseFor(e.target.value)}>
+              {useFors.map((u) => <option key={u.key} value={u.key}>{u.displayName} ({u.key})</option>)}
+            </select>
+            <p className="text-xs text-gray-500">The business event that sends this email. Fixed after creation.</p>
+          </div>
+          <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+            <div>
+              <Label htmlFor="isActive">Active</Label>
+              <p className="text-xs text-gray-500">Activating replaces the currently active template for this Use For.</p>
+              {deactivatingActive && (
+                <p className="mt-1 text-xs font-medium text-amber-700">With no active template, this email is not sent at all.</p>
               )}
-              <div className="space-y-3">
-                {(registry?.parameters ?? []).map((p) => {
-                  const used = p.name in selected;
-                  const required = !!selected[p.name];
-                  return (
-                    <div key={p.name} className={`rounded-md border p-3 ${used ? "" : "bg-gray-50"}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <label className={`flex items-center gap-2 text-sm font-medium ${used ? "" : "text-gray-500"}`}>
-                          <input type="checkbox" checked={used} onChange={() => toggleUse(p.name)} />
-                          {p.name}
-                          <span className="rounded bg-gray-100 px-1.5 text-xs font-normal text-gray-600">{p.type}</span>
-                        </label>
-                        {used && (
-                          <label className="flex items-center gap-1 text-xs">
-                            <input type="checkbox" checked={required} onChange={(e) => setRequired(p.name, e.target.checked)} />
-                            Required
-                          </label>
-                        )}
-                      </div>
-                      <p className="mt-1 text-xs text-gray-500">{p.description}</p>
-                      {used && (
-                        <div className="mt-2 flex gap-2">
-                          <Button type="button" size="sm" variant="outline" disabled={!required && p.type === "url"}
-                            title={!required && p.type === "url" ? "An optional link must be inserted inside its block" : `Insert ${tokenFor(p.name)}`}
-                            onClick={() => insert((t, s, e) => insertAtSelection(t, s, e, tokenFor(p.name)))}>
-                            Insert {tokenFor(p.name)}
-                          </Button>
-                          {!required && (
-                            <Button type="button" size="sm" variant="outline"
-                              title="Wrap the selection in a block shown only when this value is present"
-                              onClick={() => insert((t, s, e) => wrapInBlock(t, s, e, p.name, p.type))}>
-                              Insert optional block
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
             </div>
+            <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
           </div>
+        </div>
 
-          {/* Content */}
-          <div className="space-y-6 lg:col-span-2">
-            <div className="rounded-lg border bg-white p-5 space-y-4">
-              <div className="space-y-1">
-                <Label htmlFor="mailSubject">Subject</Label>
-                <Input id="mailSubject" ref={subjectRef} value={mailSubject} onFocus={() => setLastField("subject")}
-                  onChange={(e) => setMailSubject(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="htmlBody">HTML content</Label>
-                <Textarea id="htmlBody" ref={htmlRef} value={htmlBody} spellCheck={false} onFocus={() => setLastField("html")}
-                  onChange={(e) => setHtmlBody(e.target.value)} className="min-h-[480px] resize-y font-mono text-xs" />
-                <p className="text-xs text-gray-500">
-                  The content placed inside the shared brand frame (logo header and store footer are added automatically).
-                  Only <code>{"{{Name}}"}</code> tokens of the selected parameters are allowed — no scripts or expressions are executed.
-                </p>
+        {/* Content */}
+        <div className="rounded-lg border bg-white p-5 space-y-4">
+          <div className="space-y-1">
+            <Label htmlFor="mailSubject">Subject</Label>
+            <Input id="mailSubject" ref={subjectRef} value={mailSubject} onFocus={() => setLastField("subject")}
+              onChange={(e) => setMailSubject(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <Label htmlFor="htmlBody">HTML content</Label>
+              <div className="flex flex-wrap gap-2">
+                {/* Convenience only — loaded from the Use For registry; typing tokens by hand works the same. */}
+                <select aria-label="Insert Parameter" value="" disabled={available.length === 0}
+                  className="h-8 rounded-md border border-input bg-white px-2 text-sm"
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    if (name) insert((t, s, en) => insertAtSelection(t, s, en, tokenFor(name)));
+                  }}>
+                  <option value="">Insert Parameter…</option>
+                  {available.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.type})</option>)}
+                </select>
+                <select aria-label="Insert optional block" value="" disabled={available.length === 0}
+                  className="h-8 rounded-md border border-input bg-white px-2 text-sm"
+                  title="Wraps the selection in a block shown only when this value is present"
+                  onChange={(e) => {
+                    const p = available.find((x) => x.name === e.target.value);
+                    if (p) insert((t, s, en) => wrapInBlock(t, s, en, p.name, p.type));
+                  }}>
+                  <option value="">Insert optional block…</option>
+                  {available.map((p) => {
+                    const requiredNow = !!required[p.name] && tokens.used.includes(p.name);
+                    return (
+                      <option key={p.name} value={p.name} disabled={requiredNow}>
+                        {`{{#${p.name}}} … {{/${p.name}}}`}{requiredNow ? " (required — no block)" : ""}
+                      </option>
+                    );
+                  })}
+                </select>
               </div>
             </div>
+            <Textarea id="htmlBody" ref={htmlRef} value={htmlBody} spellCheck={false} onFocus={() => setLastField("html")}
+              onChange={(e) => setHtmlBody(e.target.value)} className="min-h-[560px] resize-y font-mono text-xs" />
+            <p className="text-xs text-gray-500">
+              The content placed inside the shared brand frame (logo header and store footer are added automatically). Use
+              <code className="mx-1">{"{{Name}}"}</code>for a value and<code className="mx-1">{"{{#Name}}…{{/Name}}"}</code>for a
+              part shown only when an optional value is present (an optional link must be inside its block). No scripts or
+              expressions are executed.
+            </p>
           </div>
+        </div>
+
+        {/* Detected parameters — derived from the Subject/HTML tokens, never selected by hand */}
+        <div className="rounded-lg border bg-white p-5">
+          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-semibold text-gray-800">Detected Parameters: {detected.length}</h3>
+            <span className="text-xs text-gray-600">{available.length} available for this Use For</span>
+          </div>
+          <p className="mb-3 text-xs text-gray-500">
+            Detected automatically from the Subject and HTML: add a token and it appears, remove it and it disappears. Decide
+            for each whether it is <strong>Required</strong> (a missing required value → the email is not sent). New
+            parameters start optional.
+          </p>
+          {tokenProblems.length > 0 && (
+            <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <ul className="list-disc pl-5 space-y-1">{tokenProblems.map((m) => <li key={m}>{m}</li>)}</ul>
+              <p className="mt-1 text-xs">Save is blocked until these tokens are corrected or removed.</p>
+            </div>
+          )}
+          {detected.length === 0 ? (
+            <p className="rounded-md border border-dashed p-4 text-center text-sm text-gray-500">
+              No parameters detected. Type a token such as <code>{"{{Name}}"}</code> or use Insert Parameter.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs uppercase text-gray-500">
+                    <th className="py-2 pr-4 font-medium">Parameter</th>
+                    <th className="py-2 pr-4 font-medium">Type</th>
+                    <th className="py-2 pr-4 font-medium">Description</th>
+                    <th className="py-2 font-medium">Required</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detected.map((p) => (
+                    <tr key={p.name} className="border-b last:border-0">
+                      <td className="py-2 pr-4 font-mono text-xs">{p.name}</td>
+                      <td className="py-2 pr-4"><span className="rounded bg-gray-100 px-1.5 text-xs text-gray-600">{p.type}</span></td>
+                      <td className="py-2 pr-4 text-xs text-gray-500">{p.description}</td>
+                      <td className="py-2">
+                        <input type="checkbox" aria-label={`${p.name} required`} checked={!!required[p.name]}
+                          onChange={(e) => setRequired(p.name, e.target.checked)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 
