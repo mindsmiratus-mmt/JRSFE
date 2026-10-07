@@ -1,6 +1,6 @@
 // components/forms/EmailTemplate/EmailTemplateFormPage.tsx — create / edit one Email Template Master row (Admin only)
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Eye, Loader2, Mail, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -20,23 +20,28 @@ import {
   useUpdateEmailTemplate,
   type EmailTemplate,
   type EmailTemplateParameter,
+  type EmailTemplatePreview,
 } from "@/hooks/useEmailTemplate";
-import { apiErrors, apiStatus, insertAtSelection, tokenFor, wrapInBlock } from "@/utils/emailTemplate";
+import { apiErrors, apiStatus, insertAtSelection, tokenFor, unselectedTokens, wrapInBlock } from "@/utils/emailTemplate";
+import { EmailPreviewDialog } from "./EmailPreviewDialog";
 
 type Field = "subject" | "html";
 
 export const EmailTemplateFormPage = () => {
   const { key } = useParams<{ key?: string }>();
   const isEdit = !!key;
+  /** New template prefilled from an existing one (list → Duplicate). */
+  const [searchParams] = useSearchParams();
+  const duplicateOf = isEdit ? null : searchParams.get("from");
   const navigate = useNavigate();
   const { permissions, user } = useAuth();
   const { isAdmin } = getModulePermissions(permissions, user, "Email Templates");
 
-  const { data: template, isLoading, refetch } = useEmailTemplate(isEdit ? key! : null);
+  const { data: template, isLoading, refetch } = useEmailTemplate(isEdit ? key! : duplicateOf);
   const { data: useFors = [], isLoading: useForLoading } = useEmailUseFor();
   const create = useCreateEmailTemplate();
   const update = useUpdateEmailTemplate(key ?? "");
-  const preview = usePreviewEmailTemplate(key ?? "");
+  const preview = usePreviewEmailTemplate();
 
   const [templateKey, setTemplateKey] = useState("");
   const [templateName, setTemplateName] = useState("");
@@ -49,8 +54,9 @@ export const EmailTemplateFormPage = () => {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<string[]>([]);
   const [conflict, setConflict] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
-  const [previewSubject, setPreviewSubject] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewResult, setPreviewResult] = useState<EmailTemplatePreview | null>(null);
+  const [previewErrors, setPreviewErrors] = useState<string[]>([]);
   const [lastField, setLastField] = useState<Field>("html");
   const subjectRef = useRef<HTMLInputElement>(null);
   const htmlRef = useRef<HTMLTextAreaElement>(null);
@@ -69,8 +75,16 @@ export const EmailTemplateFormPage = () => {
   };
 
   useEffect(() => {
-    if (template) load(template);
-  }, [template]);
+    if (!template) return;
+    load(template);
+    if (!isEdit) {
+      // Duplicate: a new, inactive template with the same content; key and name are edited before saving.
+      setTemplateKey(`${template.templateKey}Copy`.slice(0, 64));
+      setTemplateName(`${template.templateName} - Copy`);
+      setIsActive(false);
+      setVersion(1);
+    }
+  }, [template, isEdit]);
 
   useEffect(() => {
     if (!isEdit && !useFor && useFors.length > 0) setUseFor(useFors[0].key);
@@ -80,6 +94,10 @@ export const EmailTemplateFormPage = () => {
   const parameters: EmailTemplateParameter[] = (registry?.parameters ?? [])
     .filter((p) => p.name in selected)
     .map((p) => ({ name: p.name, type: p.type, required: selected[p.name] }));
+
+  /** Tokens still in Subject/HTML whose parameter is not selected — Save is blocked; tokens are never removed silently. */
+  const strayTokens = unselectedTokens(`${mailSubject}\n${htmlBody}`, (registry?.parameters ?? []).map((p) => p.name),
+    new Set(Object.keys(selected)));
 
   const toggleUse = (name: string) =>
     setSelected((s) => {
@@ -109,7 +127,12 @@ export const EmailTemplateFormPage = () => {
   const save = async () => {
     setErrors([]);
     setConflict(false);
-    const input = { templateName, mailSubject, htmlBody, parameters, isActive };
+    if (strayTokens.length > 0) {
+      setErrors(strayTokens.map((n) =>
+        `${tokenFor(n)} is still used in the Subject or HTML, but ${n} is not a selected parameter. Select ${n} under Parameters, or remove its token.`));
+      return;
+    }
+    const input ={ templateName, mailSubject, htmlBody, parameters, isActive };
     try {
       if (isEdit) {
         const saved = await update.mutateAsync({ ...input, version });
@@ -126,21 +149,21 @@ export const EmailTemplateFormPage = () => {
     }
   };
 
+  /** Previews the current form values — saving first is not needed. */
   const runPreview = async () => {
-    setErrors([]);
+    setPreviewResult(null);
+    setPreviewErrors([]);
+    setPreviewOpen(true);
     try {
-      const result = await preview.mutateAsync({ mailSubject, htmlBody, parameters });
-      setPreviewSubject(result.subject);
-      setPreviewHtml(result.html);
+      setPreviewResult(await preview.mutateAsync({ useFor, mailSubject, htmlBody, parameters }));
     } catch (error) {
-      setPreviewHtml(null);
-      setErrors(apiErrors(error));
+      setPreviewErrors(apiErrors(error));
     }
   };
 
   if (!isAdmin) return <div className="p-6 text-gray-600">Email templates can only be managed by an administrator.</div>;
 
-  if ((isEdit && isLoading) || useForLoading) {
+  if (((isEdit || duplicateOf) && isLoading) || useForLoading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
         <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
@@ -164,13 +187,15 @@ export const EmailTemplateFormPage = () => {
     <div className="min-h-full bg-gray-50">
       <PageHeader
         title={isEdit ? `Edit Email Template - ${template?.templateName}` : "New Email Template"}
-        subtitle={isEdit ? `${templateKey} · v${version}` : "Created inactive unless you switch it on. Save, preview, then activate."}
+        subtitle={isEdit ? `${templateKey} · v${version}`
+          : template ? `Duplicate of ${template.templateKey} — inactive until you switch it on. Change the key and name, preview, then save.`
+          : "Created inactive unless you switch it on. Preview, save, then activate."}
         icon={<Mail className="w-7 h-7 text-[#b08d28]" />}
         onBack={() => navigate("/admin/email-templates")}
         rightActions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={runPreview} disabled={!isEdit || preview.isPending}
-              title={isEdit ? "Render with sample values (never sends)" : "Save the template first"}>
+            <Button variant="outline" onClick={runPreview} disabled={!useFor || preview.isPending}
+              title="Render the current (unsaved) content with sample values — never sends">
               <Eye className="mr-1 h-4 w-4" /> Preview
             </Button>
             <Button onClick={save} disabled={saving}>
@@ -230,45 +255,60 @@ export const EmailTemplateFormPage = () => {
             </div>
 
             <div className="rounded-lg border bg-white p-5">
-              <h3 className="mb-1 font-semibold text-gray-800">Parameters</h3>
+              <div className="mb-1 flex items-baseline justify-between gap-2">
+                <h3 className="font-semibold text-gray-800">Parameters</h3>
+                <span className="text-xs text-gray-600">
+                  {parameters.length} selected of {registry?.parameters.length ?? 0} available
+                </span>
+              </div>
               <p className="mb-3 text-xs text-gray-500">
                 Supplied by the application for this Use For. Select the ones this template uses and decide, for each, whether
                 it is required (missing required value → the email is not sent). Optional values belong in a block
                 <code className="mx-1">{"{{#Name}}…{{/Name}}"}</code>that disappears when the value is absent; an optional
                 link must be used inside its block.
               </p>
+              {strayTokens.length > 0 && (
+                <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
+                  Still used in the Subject/HTML but not selected: {strayTokens.map(tokenFor).join(", ")}. Select the
+                  parameter again or remove its token — Save is blocked until then.
+                </div>
+              )}
               <div className="space-y-3">
                 {(registry?.parameters ?? []).map((p) => {
                   const used = p.name in selected;
                   const required = !!selected[p.name];
                   return (
-                    <div key={p.name} className="rounded-md border p-3">
+                    <div key={p.name} className={`rounded-md border p-3 ${used ? "" : "bg-gray-50"}`}>
                       <div className="flex items-center justify-between gap-2">
-                        <label className="flex items-center gap-2 text-sm font-medium">
+                        <label className={`flex items-center gap-2 text-sm font-medium ${used ? "" : "text-gray-500"}`}>
                           <input type="checkbox" checked={used} onChange={() => toggleUse(p.name)} />
                           {p.name}
                           <span className="rounded bg-gray-100 px-1.5 text-xs font-normal text-gray-600">{p.type}</span>
                         </label>
-                        <label className={`flex items-center gap-1 text-xs ${used ? "" : "opacity-40"}`}>
-                          <input type="checkbox" disabled={!used} checked={required} onChange={(e) => setRequired(p.name, e.target.checked)} />
-                          Required
-                        </label>
-                      </div>
-                      <p className="mt-1 text-xs text-gray-500">{p.description}</p>
-                      <div className="mt-2 flex gap-2">
-                        <Button type="button" size="sm" variant="outline" disabled={!used || (!required && p.type === "url")}
-                          title={!required && p.type === "url" ? "An optional link must be inserted inside its block" : `Insert ${tokenFor(p.name)}`}
-                          onClick={() => insert((t, s, e) => insertAtSelection(t, s, e, tokenFor(p.name)))}>
-                          Insert {tokenFor(p.name)}
-                        </Button>
-                        {!required && (
-                          <Button type="button" size="sm" variant="outline" disabled={!used}
-                            title="Wrap the selection in a block shown only when this value is present"
-                            onClick={() => insert((t, s, e) => wrapInBlock(t, s, e, p.name, p.type))}>
-                            Insert block
-                          </Button>
+                        {used && (
+                          <label className="flex items-center gap-1 text-xs">
+                            <input type="checkbox" checked={required} onChange={(e) => setRequired(p.name, e.target.checked)} />
+                            Required
+                          </label>
                         )}
                       </div>
+                      <p className="mt-1 text-xs text-gray-500">{p.description}</p>
+                      {used && (
+                        <div className="mt-2 flex gap-2">
+                          <Button type="button" size="sm" variant="outline" disabled={!required && p.type === "url"}
+                            title={!required && p.type === "url" ? "An optional link must be inserted inside its block" : `Insert ${tokenFor(p.name)}`}
+                            onClick={() => insert((t, s, e) => insertAtSelection(t, s, e, tokenFor(p.name)))}>
+                            Insert {tokenFor(p.name)}
+                          </Button>
+                          {!required && (
+                            <Button type="button" size="sm" variant="outline"
+                              title="Wrap the selection in a block shown only when this value is present"
+                              onClick={() => insert((t, s, e) => wrapInBlock(t, s, e, p.name, p.type))}>
+                              Insert optional block
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -276,7 +316,7 @@ export const EmailTemplateFormPage = () => {
             </div>
           </div>
 
-          {/* Content + preview */}
+          {/* Content */}
           <div className="space-y-6 lg:col-span-2">
             <div className="rounded-lg border bg-white p-5 space-y-4">
               <div className="space-y-1">
@@ -294,21 +334,12 @@ export const EmailTemplateFormPage = () => {
                 </p>
               </div>
             </div>
-
-            {previewHtml !== null && (
-              <div className="rounded-lg border bg-white p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-800">Preview (sample values — nothing is sent)</h3>
-                  <Button variant="ghost" size="sm" onClick={() => setPreviewHtml(null)}>Close</Button>
-                </div>
-                <p className="text-sm"><span className="text-gray-500">Subject:</span> {previewSubject}</p>
-                {/* sandbox="" — no scripts, forms, navigation or same-origin access for the previewed HTML */}
-                <iframe title="Email preview" sandbox="" srcDoc={previewHtml} className="h-[720px] w-full rounded border" />
-              </div>
-            )}
           </div>
         </div>
       </div>
+
+      <EmailPreviewDialog open={previewOpen} onClose={() => setPreviewOpen(false)} loading={preview.isPending}
+        preview={previewResult} errors={previewErrors} />
     </div>
   );
 };

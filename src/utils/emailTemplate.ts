@@ -23,6 +23,18 @@ export const wrapInBlock = (text: string, start: number, end: number, name: stri
     return insertAtSelection(text, start, end, `{{#${name}}}${inner}{{/${name}}}`);
 };
 
+/**
+ * Names among `available` whose tokens ({{Name}}, {{#Name}}, {{/Name}}) appear in `text` but are not `selected`.
+ * Used to block Save before JRS rejects it — tokens are never removed automatically.
+ */
+export const unselectedTokens = (text: string, available: string[], selected: Set<string>) => {
+    const found = new Set<string>();
+    for (const match of text.matchAll(/\{\{[#/]?([A-Za-z][A-Za-z0-9]*)\}\}/g)) {
+        if (available.includes(match[1]) && !selected.has(match[1])) found.add(match[1]);
+    }
+    return [...found];
+};
+
 /** The `errors` / `message` of a JRS 400/409 response, for display. */
 export const apiErrors = (error: unknown): string[] => {
     const data = (error as { response?: { data?: { errors?: unknown; message?: unknown } } })?.response?.data;

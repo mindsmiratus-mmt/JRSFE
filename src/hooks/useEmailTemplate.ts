@@ -122,9 +122,19 @@ export const useUpdateEmailTemplate = (key: string) => {
     });
 };
 
-/** Renders draft content with the registry's sample values. Never sends an email. */
-export const usePreviewEmailTemplate = (key: string) =>
+export interface PreviewEmailTemplateData {
+    useFor: string;
+    mailSubject: string;
+    htmlBody: string;
+    parameters: EmailTemplateParameter[];
+}
+
+/**
+ * Renders the current form values (saved or not — a new template can be previewed before it exists) with the
+ * UseFor registry's sample values. Same validation as Save; nothing is stored, queued or sent.
+ */
+export const usePreviewEmailTemplate = () =>
     useMutation({
-        mutationFn: async (data: { mailSubject: string; htmlBody: string; parameters: EmailTemplateParameter[] }) =>
-            (await api.post<EmailTemplatePreview>(`${BASE}/${encodeURIComponent(key)}/preview`, data)).data,
+        mutationFn: async (data: PreviewEmailTemplateData) =>
+            (await api.post<EmailTemplatePreview>(`${BASE}/preview`, data)).data,
     });

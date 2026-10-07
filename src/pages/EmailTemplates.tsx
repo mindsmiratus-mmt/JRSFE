@@ -1,5 +1,5 @@
 // pages/EmailTemplates.tsx — Email Template Master list (Admin only)
-import { Edit, Mail, Plus } from "lucide-react";
+import { Copy, Edit, Mail, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -89,6 +89,13 @@ export const EmailTemplates = () => {
                 variant: "ghost",
                 icon: <Edit className="h-4 w-4" />,
                 onClick: (r) => navigate(`/admin/email-templates/edit/${encodeURIComponent(r.templateKey)}`),
+              },
+              {
+                label: "Duplicate",
+                tooltip: "New inactive template with the same subject, HTML and parameters",
+                variant: "ghost",
+                icon: <Copy className="h-4 w-4" />,
+                onClick: (r) => navigate(`/admin/email-templates/new?from=${encodeURIComponent(r.templateKey)}`),
               },
             ]}
           />
