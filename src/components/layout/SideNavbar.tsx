@@ -29,6 +29,7 @@ import {
   PackageCheck,
   Coins,
   BarChart3,
+  Mail,
 } from 'lucide-react';
 
 interface SubMenuItem {
@@ -69,6 +70,7 @@ const menuItems: MenuItem[] = [
       { name: 'Current Rate', path: '/admin/currentrate', module: 'Current Rate', icon: TrendingUp },
       { name: 'Shop', path: '/admin/shop', module: 'Shop', icon: Store },
       { name: 'Vendor', path: '/admin/vendor', module: 'Vendor', icon: Truck },
+      { name: 'Email Templates', path: '/admin/email-templates', module: 'Email Templates', icon: Mail },
     ]
   },
   {

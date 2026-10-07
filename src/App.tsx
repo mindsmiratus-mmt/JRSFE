@@ -68,6 +68,8 @@ import CompleteAdvanceOrderPage from './components/forms/Sale/AdvacePaymentForm'
 import  StockAvailable  from './pages/StockAvaliable';
 import { ShopCurrentRatePage } from './pages/ShopCurrentRate';
 import {ItemRepair} from './pages/ItemRepair';
+import { EmailTemplates } from './pages/EmailTemplates';
+import { EmailTemplateFormPage } from './components/forms/EmailTemplate/EmailTemplateFormPage';
 
 
 const AppRoutes = () => {
@@ -110,6 +112,9 @@ const AppRoutes = () => {
         <Route path="shop/new" element={<ShopFormPage />} />
         <Route path="shop/rates" element={<ShopCurrentRatePage />} />
         <Route path="shop/edit/:id" element={<ShopFormPage />} />
+        <Route path="email-templates" element={<EmailTemplates />} />
+        <Route path="email-templates/new" element={<EmailTemplateFormPage />} />
+        <Route path="email-templates/edit/:key" element={<EmailTemplateFormPage />} />
         <Route path="stock" element={<Stock />} />
         <Route path="stock/new" element={<StockEntryFormPage />} />
         <Route path='batch/add' element={<BatchForm/>}/>
