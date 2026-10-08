@@ -3,7 +3,7 @@
 export interface CourierOrder {
   id: number;
   orderNo?: string;
-  /** Server-computed: Shop 7 advance order, not cancelled (the server enforces the same rule on save). */
+  /** Server-computed: Shop 7 advance order, Confirmed or Shipped (the server enforces the same rule on save). */
   canManageCourier?: boolean;
   deliveryPartnerId?: number | null;
   deliveryPartnerName?: string | null;

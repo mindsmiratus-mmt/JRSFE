@@ -193,6 +193,22 @@ export const useCompleteAdvance = () => {
   });
 };
 
+/** Shop 7 advance order: confirm the advance already paid (no new payment) — creates the invoice, status → Confirmed. */
+export const useConfirmAdvancePayment = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const { data } = await api.post(`${API_BASE}/${id}/confirm-payment`);
+      return data;
+    },
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["order", id] });
+      queryClient.invalidateQueries({ queryKey: ["orderList"] });
+    },
+  });
+};
+
 export const useEditAdvanceOrder = () => {
   const queryClient = useQueryClient();
 
