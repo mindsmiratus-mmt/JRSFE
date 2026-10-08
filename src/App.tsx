@@ -69,6 +69,7 @@ import  StockAvailable  from './pages/StockAvaliable';
 import { ShopCurrentRatePage } from './pages/ShopCurrentRate';
 import {ItemRepair} from './pages/ItemRepair';
 import { EmailTemplates } from './pages/EmailTemplates';
+import { DeliveryPartners } from './pages/DeliveryPartners';
 import { EmailTemplateFormPage } from './components/forms/EmailTemplate/EmailTemplateFormPage';
 
 
@@ -115,6 +116,7 @@ const AppRoutes = () => {
         <Route path="email-templates" element={<EmailTemplates />} />
         <Route path="email-templates/new" element={<EmailTemplateFormPage />} />
         <Route path="email-templates/edit/:key" element={<EmailTemplateFormPage />} />
+        <Route path="delivery-partners" element={<DeliveryPartners />} />
         <Route path="stock" element={<Stock />} />
         <Route path="stock/new" element={<StockEntryFormPage />} />
         <Route path='batch/add' element={<BatchForm/>}/>

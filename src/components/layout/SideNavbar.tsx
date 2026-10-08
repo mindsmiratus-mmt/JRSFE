@@ -71,6 +71,7 @@ const menuItems: MenuItem[] = [
       { name: 'Shop', path: '/admin/shop', module: 'Shop', icon: Store },
       { name: 'Vendor', path: '/admin/vendor', module: 'Vendor', icon: Truck },
       { name: 'Email Templates', path: '/admin/email-templates', module: 'Email Templates', icon: Mail },
+      { name: 'Delivery Partners', path: '/admin/delivery-partners', module: 'Delivery Partners', icon: PackageCheck },
     ]
   },
   {

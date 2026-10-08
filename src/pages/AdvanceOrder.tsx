@@ -32,8 +32,10 @@ import { useDeleteAdvanceOrder } from "@/hooks/useAdvanceOrder";
 import { useOrderList, useAdvanceReceiptPdf } from "@/hooks/useOrder";
 import { useInvoicePdf } from "@/hooks/useInvoice";
 import { useAuth } from "@/contexts/AuthContext";
+import { CourierDetails } from "@/components/advance-order/CourierDetails";
+import { hasCourierSection, type CourierOrder } from "@/components/advance-order/courier";
 
-type AdvanceOrderRow = {
+type AdvanceOrderRow = CourierOrder & {
   id: number;
   orderNo?: string;
   orderDate?: string;
@@ -220,6 +222,9 @@ export const AdvanceOrder = () => {
       return matchesStartDate && matchesEndDate && matchesStatus && matchesSearch;
     });
   }, [advanceOrders, fromDate, toDate, statusFilter, debouncedSearch]);
+
+  // Courier column only where some order can have courier details (Shop 7 advance orders, per the server).
+  const showCourier = useMemo(() => advanceOrders.some(hasCourierSection), [advanceOrders]);
 
   const totalCount = filteredOrders.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
@@ -589,6 +594,15 @@ export const AdvanceOrder = () => {
                 </div>
               ),
             },
+            ...(showCourier
+              ? [
+                  {
+                    key: "courier",
+                    label: "Courier",
+                    render: (r: AdvanceOrderRow) => <CourierDetails order={r} />,
+                  },
+                ]
+              : []),
             {
               key: "status",
               label: "Status",
@@ -747,6 +761,8 @@ export const AdvanceOrder = () => {
                         </span>
                       </div>
                     </div>
+
+                    <CourierDetails order={order} variant="card" />
                   </div>
 
                   <div className="p-4 border-t flex flex-wrap gap-2 justify-end">
