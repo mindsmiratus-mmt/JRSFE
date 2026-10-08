@@ -5,22 +5,12 @@ import api from '@/lib/axios';
 // ========================
 // Types
 // ========================
-export type EmailParameterType = 'text' | 'url';
-
-/** A parameter a template uses (ParameterJson entry). `required` is chosen per template. */
-export interface EmailTemplateParameter {
-    name: string;
-    type: EmailParameterType;
-    required: boolean;
-}
-
+/** A template is identified by its TemplateKey — the application asks for it by that key. */
 export interface EmailTemplate {
     templateKey: string;
     templateName: string;
-    useFor: string;
     mailSubject: string;
     htmlBody: string;
-    parameters: EmailTemplateParameter[];
     isActive: boolean;
     version: number;
     createdAt: string;
@@ -28,31 +18,15 @@ export interface EmailTemplate {
     updatedBy?: string;
 }
 
-/** A parameter a business event can supply (from the application's UseFor registry). */
-export interface EmailUseForParameter {
-    name: string;
-    type: EmailParameterType;
-    description: string;
-    sampleValue: string;
-}
-
-export interface EmailUseFor {
-    key: string;
-    displayName: string;
-    parameters: EmailUseForParameter[];
-}
-
 export interface EmailTemplateInput {
     templateName: string;
     mailSubject: string;
     htmlBody: string;
-    parameters: EmailTemplateParameter[];
     isActive: boolean;
 }
 
 export interface CreateEmailTemplateData extends EmailTemplateInput {
     templateKey: string;
-    useFor: string;
 }
 
 export interface UpdateEmailTemplateData extends EmailTemplateInput {
@@ -70,7 +44,6 @@ export interface EmailTemplatePreview {
 const KEYS = {
     all: ['emailTemplates'] as const,
     single: (key: string) => ['emailTemplate', key] as const,
-    useFor: ['emailTemplateUseFor'] as const,
 };
 
 const BASE = '/admin/email-templates';
@@ -91,13 +64,6 @@ export const useEmailTemplate = (key: string | null) =>
         enabled: !!key,
     });
 
-export const useEmailUseFor = () =>
-    useQuery<EmailUseFor[]>({
-        queryKey: KEYS.useFor,
-        queryFn: async () => (await api.get<EmailUseFor[]>(`${BASE}/use-for`)).data,
-        staleTime: Infinity, // application-owned registry; changes only with a JRS release
-    });
-
 export const useCreateEmailTemplate = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -115,7 +81,6 @@ export const useUpdateEmailTemplate = (key: string) => {
         mutationFn: async (data: UpdateEmailTemplateData) =>
             (await api.put<EmailTemplate>(`${BASE}/${encodeURIComponent(key)}`, data)).data,
         onSuccess: (saved) => {
-            // Activation may have deactivated another template of the same UseFor.
             queryClient.invalidateQueries({ queryKey: KEYS.all });
             queryClient.setQueryData(KEYS.single(saved.templateKey), saved);
         },
@@ -123,15 +88,15 @@ export const useUpdateEmailTemplate = (key: string) => {
 };
 
 export interface PreviewEmailTemplateData {
-    useFor: string;
     mailSubject: string;
     htmlBody: string;
-    parameters: EmailTemplateParameter[];
+    /** Optional, by placeholder name. A placeholder without one shows as [name]. */
+    sampleValues?: Record<string, string>;
 }
 
 /**
- * Renders the current form values (saved or not — a new template can be previewed before it exists) with the
- * UseFor registry's sample values. Same validation as Save; nothing is stored, queued or sent.
+ * Renders the current form values (saved or not — a new template can be previewed before it exists). A placeholder
+ * without a sample value shows as [name]. Same validation as Save; nothing is stored, queued or sent.
  */
 export const usePreviewEmailTemplate = () =>
     useMutation({

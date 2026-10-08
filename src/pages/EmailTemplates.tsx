@@ -7,7 +7,7 @@ import { CommonTable, type Column } from "@/components/ui/table";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useAuth } from "@/contexts/AuthContext";
 import { getModulePermissions } from "@/utils/permission";
-import { useEmailTemplates, useEmailUseFor, type EmailTemplate } from "@/hooks/useEmailTemplate";
+import { useEmailTemplates, type EmailTemplate } from "@/hooks/useEmailTemplate";
 
 type Row = EmailTemplate & { id: string };
 
@@ -16,28 +16,16 @@ export const EmailTemplates = () => {
   const { permissions, user } = useAuth();
   const { isAdmin } = getModulePermissions(permissions, user, "Email Templates");
   const { data: templates = [], isLoading, isError } = useEmailTemplates();
-  const { data: useFors = [] } = useEmailUseFor();
 
   if (!isAdmin) {
     return <div className="p-6 text-gray-600">Email templates can only be managed by an administrator.</div>;
   }
 
-  const displayNameOf = (key: string) => useFors.find((u) => u.key === key)?.displayName ?? key;
   const rows: Row[] = templates.map((t) => ({ ...t, id: t.templateKey }));
 
   const columns: Column<Row>[] = [
     { key: "templateName", label: "Template Name" },
     { key: "templateKey", label: "Template Key", render: (r) => <code className="text-xs">{r.templateKey}</code> },
-    {
-      key: "useFor",
-      label: "Use For",
-      render: (r) => (
-        <div>
-          <div>{displayNameOf(r.useFor)}</div>
-          <code className="text-xs text-gray-500">{r.useFor}</code>
-        </div>
-      ),
-    },
     {
       key: "isActive",
       label: "Active",
@@ -65,7 +53,7 @@ export const EmailTemplates = () => {
     <div className="min-h-full bg-gray-50">
       <PageHeader fullWidth
         title="Email Templates"
-        subtitle="Email content used by the application. Exactly one active template per Use For is sent."
+        subtitle="Email content used by the application. The application asks for a template by its Template Key and sends it only while it is active."
         icon={<Mail className="w-7 h-7 text-[#b08d28]" />}
         rightActions={
           <Button onClick={() => navigate("/admin/email-templates/new")}>
@@ -92,7 +80,7 @@ export const EmailTemplates = () => {
               },
               {
                 label: "Duplicate",
-                tooltip: "New inactive template with the same subject, HTML and parameters",
+                tooltip: "New inactive template with the same subject and HTML",
                 variant: "ghost",
                 icon: <Copy className="h-4 w-4" />,
                 onClick: (r) => navigate(`/admin/email-templates/new?from=${encodeURIComponent(r.templateKey)}`),

@@ -1,5 +1,5 @@
 // components/forms/EmailTemplate/EmailTemplateFormPage.tsx — create / edit one Email Template Master row (Admin only)
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Eye, Loader2, Mail, Save } from "lucide-react";
 
@@ -15,17 +15,16 @@ import { getModulePermissions } from "@/utils/permission";
 import {
   useCreateEmailTemplate,
   useEmailTemplate,
-  useEmailUseFor,
   usePreviewEmailTemplate,
   useUpdateEmailTemplate,
   type EmailTemplate,
-  type EmailTemplateParameter,
   type EmailTemplatePreview,
 } from "@/hooks/useEmailTemplate";
-import { apiErrors, apiStatus, insertAtSelection, scanTokens, tokenFor, wrapInBlock } from "@/utils/emailTemplate";
+import { apiErrors, apiStatus } from "@/utils/emailTemplate";
 import { EmailPreviewDialog } from "./EmailPreviewDialog";
 
-type Field = "subject" | "html";
+/** Same rule as JRS EmailTemplateService.TemplateKeyPattern. */
+const TEMPLATE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{1,63}$/;
 
 export const EmailTemplateFormPage = () => {
   const { key } = useParams<{ key?: string }>();
@@ -38,47 +37,37 @@ export const EmailTemplateFormPage = () => {
   const { isAdmin } = getModulePermissions(permissions, user, "Email Templates");
 
   const { data: template, isLoading, refetch } = useEmailTemplate(isEdit ? key! : duplicateOf);
-  const { data: useFors = [], isLoading: useForLoading } = useEmailUseFor();
   const create = useCreateEmailTemplate();
   const update = useUpdateEmailTemplate(key ?? "");
   const preview = usePreviewEmailTemplate();
 
   const [templateKey, setTemplateKey] = useState("");
   const [templateName, setTemplateName] = useState("");
-  const [useFor, setUseFor] = useState("");
   const [mailSubject, setMailSubject] = useState("");
   const [htmlBody, setHtmlBody] = useState("");
   const [isActive, setIsActive] = useState(false);
   const [version, setVersion] = useState(1);
-  /**
-   * Required flag chosen per parameter. Which parameters the template uses is NOT stored here — it is detected from the
-   * Subject/HTML tokens. A flag is kept while its token is temporarily absent (e.g. mid-typing); only detected ones are sent.
-   */
-  const [required, setRequiredFlags] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<string[]>([]);
   const [conflict, setConflict] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewResult, setPreviewResult] = useState<EmailTemplatePreview | null>(null);
   const [previewErrors, setPreviewErrors] = useState<string[]>([]);
-  const [lastField, setLastField] = useState<Field>("html");
-  const subjectRef = useRef<HTMLInputElement>(null);
-  const htmlRef = useRef<HTMLTextAreaElement>(null);
 
   const load = (t: EmailTemplate) => {
     setTemplateKey(t.templateKey);
     setTemplateName(t.templateName);
-    setUseFor(t.useFor);
     setMailSubject(t.mailSubject);
     setHtmlBody(t.htmlBody);
     setIsActive(t.isActive);
     setVersion(t.version);
-    setRequiredFlags(Object.fromEntries(t.parameters.map((p) => [p.name, p.required])));
     setErrors([]);
     setConflict(false);
   };
 
-  useEffect(() => {
-    if (!template) return;
+  // Load the form when the fetched template arrives or changes (adjusting state during render, not in an effect).
+  const [loadedFrom, setLoadedFrom] = useState<EmailTemplate | null>(null);
+  if (template && template !== loadedFrom) {
+    setLoadedFrom(template);
     load(template);
     if (!isEdit) {
       // Duplicate: a new, inactive template with the same content; key and name are edited before saving.
@@ -87,56 +76,30 @@ export const EmailTemplateFormPage = () => {
       setIsActive(false);
       setVersion(1);
     }
-  }, [template, isEdit]);
+  }
 
-  useEffect(() => {
-    if (!isEdit && !useFor && useFors.length > 0) setUseFor(useFors[0].key);
-  }, [isEdit, useFor, useFors]);
-
-  const registry = useMemo(() => useFors.find((u) => u.key === useFor), [useFors, useFor]);
-  const available = registry?.parameters ?? [];
-  const tokens = scanTokens([mailSubject, htmlBody], available.map((p) => p.name));
-  /** Detected parameters (registry order, registry type); a newly detected one is optional until marked Required. */
-  const detected = available.filter((p) => tokens.used.includes(p.name));
-  const parameters: EmailTemplateParameter[] = detected.map((p) => ({ name: p.name, type: p.type, required: !!required[p.name] }));
-  const tokenProblems = [
-    ...tokens.unknown.map((n) => `${n} is not available for this UseFor.`),
-    ...tokens.malformed.map((t) => `Malformed token ${t} — use {{Name}}, {{#Name}} or {{/Name}} with no spaces.`),
-  ];
-
-  const setRequired = (name: string, value: boolean) => setRequiredFlags((r) => ({ ...r, [name]: value }));
-
-  /** Inserts at the caret of the field last focused (subject or HTML). */
-  const insert = (build: (text: string, start: number, end: number) => { text: string; caret: number }) => {
-    const element = lastField === "subject" ? subjectRef.current : htmlRef.current;
-    const value = lastField === "subject" ? mailSubject : htmlBody;
-    const start = element?.selectionStart ?? value.length;
-    const end = element?.selectionEnd ?? value.length;
-    const result = build(value, start, end);
-    if (lastField === "subject") setMailSubject(result.text);
-    else setHtmlBody(result.text);
-    requestAnimationFrame(() => {
-      element?.focus();
-      element?.setSelectionRange(result.caret, result.caret);
-    });
-  };
+  const trimmedKey = templateKey.trim();
+  const keyError = isEdit ? null
+    : !trimmedKey ? "Template Key is required."
+    : !TEMPLATE_KEY_PATTERN.test(trimmedKey) ? "Template Key must be 2–64 characters: a letter, then letters, digits or underscores."
+    : null;
 
   const save = async () => {
     setErrors([]);
     setConflict(false);
-    if (tokenProblems.length > 0) {
-      setErrors(tokenProblems);
+    if (keyError) {
+      setErrors([keyError]);
       return;
     }
-    // JRS derives the parameter list from the content again; `parameters` carries the Required choices.
-    const input = { templateName, mailSubject, htmlBody, parameters, isActive };
+    // Placeholders are free-form: JRS checks the template fields only, never what a placeholder means.
+    const input = { templateName, mailSubject, htmlBody, isActive };
     try {
       if (isEdit) {
         const saved = await update.mutateAsync({ ...input, version });
         load(saved);
         toast.success(`Saved ${saved.templateKey} (v${saved.version})`);
       } else {
-        const saved = await create.mutateAsync({ ...input, templateKey: templateKey.trim(), useFor });
+        const saved = await create.mutateAsync({ ...input, templateKey: trimmedKey });
         toast.success(`Created ${saved.templateKey}`);
         navigate(`/admin/email-templates/edit/${encodeURIComponent(saved.templateKey)}`, { replace: true });
       }
@@ -152,7 +115,7 @@ export const EmailTemplateFormPage = () => {
     setPreviewErrors([]);
     setPreviewOpen(true);
     try {
-      setPreviewResult(await preview.mutateAsync({ useFor, mailSubject, htmlBody, parameters }));
+      setPreviewResult(await preview.mutateAsync({ mailSubject, htmlBody }));
     } catch (error) {
       setPreviewErrors(apiErrors(error));
     }
@@ -160,7 +123,7 @@ export const EmailTemplateFormPage = () => {
 
   if (!isAdmin) return <div className="p-6 text-gray-600">Email templates can only be managed by an administrator.</div>;
 
-  if (((isEdit || duplicateOf) && isLoading) || useForLoading) {
+  if ((isEdit || duplicateOf) && isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
         <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
@@ -191,8 +154,8 @@ export const EmailTemplateFormPage = () => {
         onBack={() => navigate("/admin/email-templates")}
         rightActions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={runPreview} disabled={!useFor || preview.isPending}
-              title="Render the current (unsaved) content with sample values — never sends">
+            <Button variant="outline" onClick={runPreview} disabled={preview.isPending}
+              title="Render the current (unsaved) content — placeholders show as [name]; never sends">
               <Eye className="mr-1 h-4 w-4" /> Preview
             </Button>
             <Button onClick={save} disabled={saving}>
@@ -215,32 +178,27 @@ export const EmailTemplateFormPage = () => {
         )}
 
         {/* Details */}
-        <div className="grid grid-cols-1 gap-4 rounded-lg border bg-white p-5 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 rounded-lg border bg-white p-5 md:grid-cols-3">
           <div className="space-y-1">
-            <Label htmlFor="templateKey">Template Key</Label>
-            <Input id="templateKey" value={templateKey} disabled={isEdit} placeholder="e.g. CustomerWelcomeV2"
+            <Label htmlFor="templateKey">Template Key <span className="text-red-600">*</span></Label>
+            <Input id="templateKey" value={templateKey} disabled={isEdit} placeholder="e.g. OrderConfirmation"
               onChange={(e) => setTemplateKey(e.target.value)} />
-            <p className="text-xs text-gray-500">Stable identity; letters, digits, underscore. Cannot be changed later.</p>
+            <p className="text-xs text-gray-500">
+              The key the application asks for when it sends this email. Letters, digits, underscore; unique; cannot be
+              changed later. Creating a template does not make the application send it.
+            </p>
+            {keyError && trimmedKey !== "" && <p className="text-xs text-red-600">{keyError}</p>}
           </div>
           <div className="space-y-1">
             <Label htmlFor="templateName">Template Name</Label>
             <Input id="templateName" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="useFor">Use For</Label>
-            <select id="useFor" value={useFor} disabled={isEdit}
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-60"
-              onChange={(e) => setUseFor(e.target.value)}>
-              {useFors.map((u) => <option key={u.key} value={u.key}>{u.displayName} ({u.key})</option>)}
-            </select>
-            <p className="text-xs text-gray-500">The business event that sends this email. Fixed after creation.</p>
-          </div>
           <div className="flex items-start justify-between gap-3 rounded-md border p-3">
             <div>
               <Label htmlFor="isActive">Active</Label>
-              <p className="text-xs text-gray-500">Activating replaces the currently active template for this Use For.</p>
+              <p className="text-xs text-gray-500">The application sends this template only while it is active.</p>
               {deactivatingActive && (
-                <p className="mt-1 text-xs font-medium text-amber-700">With no active template, this email is not sent at all.</p>
+                <p className="mt-1 text-xs font-medium text-amber-700">While inactive, the email that uses this key is not sent at all.</p>
               )}
             </div>
             <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
@@ -251,101 +209,20 @@ export const EmailTemplateFormPage = () => {
         <div className="rounded-lg border bg-white p-5 space-y-4">
           <div className="space-y-1">
             <Label htmlFor="mailSubject">Subject</Label>
-            <Input id="mailSubject" ref={subjectRef} value={mailSubject} onFocus={() => setLastField("subject")}
-              onChange={(e) => setMailSubject(e.target.value)} />
+            <Input id="mailSubject" value={mailSubject} onChange={(e) => setMailSubject(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <Label htmlFor="htmlBody">HTML content</Label>
-              <div className="flex flex-wrap gap-2">
-                {/* Convenience only — loaded from the Use For registry; typing tokens by hand works the same. */}
-                <select aria-label="Insert Parameter" value="" disabled={available.length === 0}
-                  className="h-8 rounded-md border border-input bg-white px-2 text-sm"
-                  onChange={(e) => {
-                    const name = e.target.value;
-                    if (name) insert((t, s, en) => insertAtSelection(t, s, en, tokenFor(name)));
-                  }}>
-                  <option value="">Insert Parameter…</option>
-                  {available.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.type})</option>)}
-                </select>
-                <select aria-label="Insert optional block" value="" disabled={available.length === 0}
-                  className="h-8 rounded-md border border-input bg-white px-2 text-sm"
-                  title="Wraps the selection in a block shown only when this value is present"
-                  onChange={(e) => {
-                    const p = available.find((x) => x.name === e.target.value);
-                    if (p) insert((t, s, en) => wrapInBlock(t, s, en, p.name, p.type));
-                  }}>
-                  <option value="">Insert optional block…</option>
-                  {available.map((p) => {
-                    const requiredNow = !!required[p.name] && tokens.used.includes(p.name);
-                    return (
-                      <option key={p.name} value={p.name} disabled={requiredNow}>
-                        {`{{#${p.name}}} … {{/${p.name}}}`}{requiredNow ? " (required — no block)" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-            </div>
-            <Textarea id="htmlBody" ref={htmlRef} value={htmlBody} spellCheck={false} onFocus={() => setLastField("html")}
+            <Label htmlFor="htmlBody">HTML content</Label>
+            <Textarea id="htmlBody" value={htmlBody} spellCheck={false}
               onChange={(e) => setHtmlBody(e.target.value)} className="min-h-[560px] resize-y font-mono text-xs" />
             <p className="text-xs text-gray-500">
-              The content placed inside the shared brand frame (logo header and store footer are added automatically). Use
-              <code className="mx-1">{"{{Name}}"}</code>for a value and<code className="mx-1">{"{{#Name}}…{{/Name}}"}</code>for a
-              part shown only when an optional value is present (an optional link must be inside its block). No scripts or
-              expressions are executed.
+              The content placed inside the shared brand frame (logo header and store footer are added automatically). Use any
+              placeholder such as<code className="mx-1">{"{{customer_name}}"}</code>or<code className="mx-1">{"{{product_details}}"}</code>
+              — the code that sends this email supplies its values (names must match what it supplies). Optionally,
+              <code className="mx-1">{"{{#name}}…{{/name}}"}</code>shows a part only when that value is present. Preview shows a
+              placeholder without a value as<code className="mx-1">[name]</code>. No scripts or expressions are executed.
             </p>
           </div>
-        </div>
-
-        {/* Detected parameters — derived from the Subject/HTML tokens, never selected by hand */}
-        <div className="rounded-lg border bg-white p-5">
-          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="font-semibold text-gray-800">Detected Parameters: {detected.length}</h3>
-            <span className="text-xs text-gray-600">{available.length} available for this Use For</span>
-          </div>
-          <p className="mb-3 text-xs text-gray-500">
-            Detected automatically from the Subject and HTML: add a token and it appears, remove it and it disappears. Decide
-            for each whether it is <strong>Required</strong> (a missing required value → the email is not sent). New
-            parameters start optional.
-          </p>
-          {tokenProblems.length > 0 && (
-            <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              <ul className="list-disc pl-5 space-y-1">{tokenProblems.map((m) => <li key={m}>{m}</li>)}</ul>
-              <p className="mt-1 text-xs">Save is blocked until these tokens are corrected or removed.</p>
-            </div>
-          )}
-          {detected.length === 0 ? (
-            <p className="rounded-md border border-dashed p-4 text-center text-sm text-gray-500">
-              No parameters detected. Type a token such as <code>{"{{Name}}"}</code> or use Insert Parameter.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs uppercase text-gray-500">
-                    <th className="py-2 pr-4 font-medium">Parameter</th>
-                    <th className="py-2 pr-4 font-medium">Type</th>
-                    <th className="py-2 pr-4 font-medium">Description</th>
-                    <th className="py-2 font-medium">Required</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detected.map((p) => (
-                    <tr key={p.name} className="border-b last:border-0">
-                      <td className="py-2 pr-4 font-mono text-xs">{p.name}</td>
-                      <td className="py-2 pr-4"><span className="rounded bg-gray-100 px-1.5 text-xs text-gray-600">{p.type}</span></td>
-                      <td className="py-2 pr-4 text-xs text-gray-500">{p.description}</td>
-                      <td className="py-2">
-                        <input type="checkbox" aria-label={`${p.name} required`} checked={!!required[p.name]}
-                          onChange={(e) => setRequired(p.name, e.target.checked)} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       </div>
 

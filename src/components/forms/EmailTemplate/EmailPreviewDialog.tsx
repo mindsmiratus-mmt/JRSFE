@@ -26,7 +26,7 @@ export const EmailPreviewDialog = ({ open, onClose, loading, preview, errors }: 
           <div>
             <DialogTitle>Email Preview</DialogTitle>
             <DialogDescription className="mt-1 text-amber-700">
-              Preview only — no email is sent. Sample values from the Use For registry are used.
+              Preview only — no email is sent. Each placeholder shows as [name].
             </DialogDescription>
           </div>
           <div className="flex rounded-md border p-0.5">

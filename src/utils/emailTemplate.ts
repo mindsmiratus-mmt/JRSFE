@@ -1,52 +1,5 @@
 // utils/emailTemplate.ts — small helpers for the Email Template editor
 
-/** {{Name}} — a parameter value (HTML-encoded by JRS when rendered). */
-export const tokenFor = (name: string) => `{{${name}}}`;
-
-/**
- * Replaces the selection [start, end) of `text` with `insert`.
- * Returns the new text and the caret position after the insertion.
- */
-export const insertAtSelection = (text: string, start: number, end: number, insert: string) => {
-    const from = Math.max(0, Math.min(start, text.length));
-    const to = Math.max(from, Math.min(end, text.length));
-    return { text: text.slice(0, from) + insert + text.slice(to), caret: from + insert.length };
-};
-
-/**
- * Wraps the selection in an optional block {{#Name}} … {{/Name}} — rendered only when the value is present.
- * An empty selection gets a placeholder that uses the value, so the block is immediately meaningful.
- */
-export const wrapInBlock = (text: string, start: number, end: number, name: string, type: 'text' | 'url') => {
-    const selected = text.slice(start, end);
-    const inner = selected || (type === 'url' ? `<a href="${tokenFor(name)}" target="_blank">Link</a>` : tokenFor(name));
-    return insertAtSelection(text, start, end, `{{#${name}}}${inner}{{/${name}}}`);
-};
-
-/**
- * Scans subject + HTML for tokens ({{Name}}, {{#Name}}, {{/Name}}), mirroring JRS detection:
- * - used: parameters of the UseFor registry (`available`, in registry order) that appear, each once;
- * - unknown: well-formed names the UseFor does not supply;
- * - malformed: anything else between {{ and }}.
- * The registry comes from JRS — nothing here is hardcoded. JRS re-derives and validates on save.
- */
-export const scanTokens = (texts: string[], available: string[]) => {
-    const names = new Set<string>();
-    const malformed = new Set<string>();
-    for (const text of texts) {
-        for (const match of text.matchAll(/\{\{([^{}]*)\}\}/g)) {
-            const token = /^[#/]?([A-Za-z][A-Za-z0-9]*)$/.exec(match[1]);
-            if (token) names.add(token[1]);
-            else malformed.add(match[0]);
-        }
-    }
-    return {
-        used: available.filter((n) => names.has(n)),
-        unknown: [...names].filter((n) => !available.includes(n)),
-        malformed: [...malformed],
-    };
-};
-
 /** The `errors` / `message` of a JRS 400/409 response, for display. */
 export const apiErrors = (error: unknown): string[] => {
     const data = (error as { response?: { data?: { errors?: unknown; message?: unknown } } })?.response?.data;
