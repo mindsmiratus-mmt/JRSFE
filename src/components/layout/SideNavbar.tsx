@@ -27,6 +27,7 @@ import {
   FileSpreadsheet,
   ShoppingBag,
   PackageCheck,
+  TicketPercent,
   Coins,
   BarChart3,
   Mail,
@@ -72,6 +73,7 @@ const menuItems: MenuItem[] = [
       { name: 'Vendor', path: '/admin/vendor', module: 'Vendor', icon: Truck },
       { name: 'Email Templates', path: '/admin/email-templates', module: 'Email Templates', icon: Mail },
       { name: 'Delivery Partners', path: '/admin/delivery-partners', module: 'Delivery Partners', icon: PackageCheck },
+      { name: 'Coupons', path: '/admin/coupons', module: 'Coupons', icon: TicketPercent },
     ]
   },
   {
