@@ -27,7 +27,8 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { getModulePermissions } from "@/utils/permission";
 import { useInvoicePdf } from "@/hooks/useInvoice";
-import { ConfirmPaymentButton } from "@/components/advance-order/ConfirmPaymentButton";
+import { ConfirmOrderButton } from "@/components/advance-order/ConfirmOrderButton";
+import { ReviewFinalizeButton } from "@/components/advance-order/ReviewFinalizeButton";
 import {
   useOrderList,
   useCancelOrder,
@@ -803,8 +804,8 @@ export const Sale = () => {
                   <div className="flex flex-wrap items-center gap-2">
                     {r.status !== "Closed" &&r.status !== "Cancelled" && !isConfirmedLifecycle(r) && hasUpdate ? (
                       <>
-                      {r.canConfirmPayment ? (
-                        <ConfirmPaymentButton orderId={r.id} orderNo={r.orderNo} className="h-8" />
+                      {r.canConfirmOrder ? (
+                        <ConfirmOrderButton orderId={r.id} orderNo={r.orderNo} className="h-8" />
                       ) : (
                       <Button
                         size="sm"
@@ -833,6 +834,10 @@ export const Sale = () => {
                         <Trash2 className="w-4 h-4" />
                       </Button>
                     </>
+                    ) : null}
+
+                    {hasUpdate && r.canFinalize ? (
+                      <ReviewFinalizeButton orderId={r.id} className="h-8" />
                     ) : null}
 
                     {shouldShowInvoice(r) ? (
@@ -1098,8 +1103,8 @@ export const Sale = () => {
                     <div className="flex flex-wrap items-center gap-2 justify-end">
                       {order.status !== "Closed" && order.status !== "Cancelled" && !isConfirmedLifecycle(order) && hasUpdate ? (
                         <>
-                        {order.canConfirmPayment ? (
-                          <ConfirmPaymentButton orderId={order.id} orderNo={order.orderNo} className="shadow-sm h-9" />
+                        {order.canConfirmOrder ? (
+                          <ConfirmOrderButton orderId={order.id} orderNo={order.orderNo} className="shadow-sm h-9" />
                         ) : (
                         <Button
                           size="sm"
@@ -1127,6 +1132,10 @@ export const Sale = () => {
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </>
+                      ) : null}
+
+                      {hasUpdate && order.canFinalize ? (
+                        <ReviewFinalizeButton orderId={order.id} className="shadow-sm h-9" />
                       ) : null}
 
                       {shouldShowInvoice(order) ? (

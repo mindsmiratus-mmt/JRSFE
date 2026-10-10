@@ -33,7 +33,8 @@ import { useOrderList, useAdvanceReceiptPdf } from "@/hooks/useOrder";
 import { useInvoicePdf } from "@/hooks/useInvoice";
 import { useAuth } from "@/contexts/AuthContext";
 import { CourierDetails } from "@/components/advance-order/CourierDetails";
-import { ConfirmPaymentButton } from "@/components/advance-order/ConfirmPaymentButton";
+import { ConfirmOrderButton } from "@/components/advance-order/ConfirmOrderButton";
+import { ReviewFinalizeButton } from "@/components/advance-order/ReviewFinalizeButton";
 import { hasCourierSection, type CourierOrder } from "@/components/advance-order/courier";
 
 type AdvanceOrderRow = CourierOrder & {
@@ -47,8 +48,10 @@ type AdvanceOrderRow = CourierOrder & {
   balanceAmount?: number;
   status?: string;
   invoiceId?: number;
-  /** Server-computed: Shop 7 advance order awaiting payment confirmation (fully paid, no invoice). */
-  canConfirmPayment?: boolean;
+  /** Server-computed: Shop 7 advance order awaiting Confirm Order (PendingPayment, fully paid, no invoice). */
+  canConfirmOrder?: boolean;
+  /** Server-computed: Shop 7 confirmed advance order awaiting review and invoice (Confirmed, no invoice). */
+  canFinalize?: boolean;
   invoice?: {
     id?: number;
     invoiceNo?: string;
@@ -113,7 +116,7 @@ const isAfterDate = (a: string | null, b: string | null) => {
 const isPendingAdvanceOrder = (order: AdvanceOrderRow) =>
   !!order.isAdvanceOrder && order.status === "PendingPayment";
 
-// Shop 7 lifecycle after payment confirmation (invoice exists): Confirmed → Shipped → Delivered.
+// Shop 7 lifecycle after Confirm Order: Confirmed (preparing, then invoiced) → Shipped → Delivered.
 const CONFIRMED_LIFECYCLE = ["Confirmed", "Shipped", "Delivered"];
 
 const isPaidAdvanceOrder = (order: AdvanceOrderRow) =>
@@ -122,8 +125,17 @@ const isPaidAdvanceOrder = (order: AdvanceOrderRow) =>
     order.status === "DELIVERED" ||
     CONFIRMED_LIFECYCLE.includes(String(order.status)));
 
-const statusLabel = (status?: string) =>
-  status === "PendingPayment" ? "Pending Payment" : status === "Shipped" ? "Shipped · Delivery Pending" : status;
+// Confirmed splits on the invoice: preparing (no invoice yet) vs invoiced and awaiting courier dispatch.
+const statusLabel = (status?: string, invoiceId?: number) =>
+  status === "PendingPayment"
+    ? "Pending Payment"
+    : status === "Confirmed"
+    ? invoiceId
+      ? "Invoiced · Awaiting Dispatch"
+      : "Confirmed · Preparing"
+    : status === "Shipped"
+    ? "Shipped · Delivery Pending"
+    : status;
 
 const shouldShowAdvanceReceipt = (order: AdvanceOrderRow) =>
   isPendingAdvanceOrder(order);
@@ -577,9 +589,11 @@ export const AdvanceOrder = () => {
               label: "Receipt / Invoice",
               render: (r: AdvanceOrderRow) => (
                 <div className="flex flex-wrap gap-2">
-                  {hasUpdate && r.canConfirmPayment && (
-                    <ConfirmPaymentButton orderId={r.id} orderNo={r.orderNo} />
+                  {hasUpdate && r.canConfirmOrder && (
+                    <ConfirmOrderButton orderId={r.id} orderNo={r.orderNo} />
                   )}
+
+                  {hasUpdate && r.canFinalize && <ReviewFinalizeButton orderId={r.id} />}
 
                   {shouldShowAdvanceReceipt(r) && (
                     <Button
@@ -633,7 +647,7 @@ export const AdvanceOrder = () => {
                     r.status
                   )}`}
                 >
-                  {statusLabel(r.status)}
+                  {statusLabel(r.status, r.invoiceId)}
                 </span>
               ),
             },
@@ -719,7 +733,7 @@ export const AdvanceOrder = () => {
                       </div>
 
                       <Badge className={cn("text-[10px] px-1.5 py-0", statusClass(order.status))}>
-                        {statusLabel(order.status)}
+                        {statusLabel(order.status, order.invoiceId)}
                       </Badge>
                     </div>
 
@@ -787,9 +801,11 @@ export const AdvanceOrder = () => {
                   </div>
 
                   <div className="p-4 border-t flex flex-wrap gap-2 justify-end">
-                    {hasUpdate && order.canConfirmPayment && (
-                      <ConfirmPaymentButton orderId={order.id} orderNo={order.orderNo} />
+                    {hasUpdate && order.canConfirmOrder && (
+                      <ConfirmOrderButton orderId={order.id} orderNo={order.orderNo} />
                     )}
+
+                    {hasUpdate && order.canFinalize && <ReviewFinalizeButton orderId={order.id} />}
 
                     {shouldShowAdvanceReceipt(order) && (
                       <Button
