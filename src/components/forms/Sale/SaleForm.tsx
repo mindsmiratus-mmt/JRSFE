@@ -635,8 +635,9 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
   }, [isEditMode, existingOrder]);
 
   const handleCreateCustomer = () => {
-    if (!newCustomer.name || !newCustomer.phone) {
-      toast.error("Name and Phone are required.");
+    // Phone is optional at the counter: without a full mobile number the server gives the referral code a random suffix.
+    if (!newCustomer.name.trim()) {
+      toast.error("Name is required.");
       return;
     }
 
@@ -2268,11 +2269,11 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
 
                 {/* Phone */}
                 <div>
-                  <Label className="text-sm font-semibold text-gray-700">Phone <span className="text-red-500">*</span></Label>
+                  <Label className="text-sm font-semibold text-gray-700">Phone</Label>
                   <Input
                     value={newCustomer.phone}
                     onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
-                    placeholder="10-digit mobile number"
+                    placeholder="10-digit mobile number (optional)"
                     className="mt-1.5"
                   />
                 </div>
