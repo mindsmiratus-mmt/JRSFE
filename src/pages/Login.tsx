@@ -15,6 +15,7 @@ import {
 import { toast } from '@/components/ui/toast';
 import { useMemo, useState } from 'react';
 import { Loader2, MapPin, Store } from 'lucide-react';
+import { getLoginErrorMessage, getShopSwitchErrorMessage } from '@/lib/loginErrorMessage';
 
 const loginSchema = Yup.object().shape({
   username: Yup.string().required('Username is required'),
@@ -48,11 +49,8 @@ export const Login = () => {
         toast.success('Login successful');
         navigate('/admin/dashboard');
       }
-    } catch (error: any) {
-      setFieldError(
-        'password',
-        error?.message || 'Invalid username or password'
-      );
+    } catch (error) {
+      setFieldError('password', getLoginErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -75,12 +73,8 @@ export const Login = () => {
 
       toast.success(`Shop switched to ${shop.name}`);
       navigate('/admin/dashboard');
-    } catch (error: any) {
-      toast.error(
-        error?.response?.data?.message ||
-          error?.message ||
-          'Failed to switch shop'
-      );
+    } catch (error) {
+      toast.error(getShopSwitchErrorMessage(error));
     } finally {
       setIsSwitchingShop(null);
     }
