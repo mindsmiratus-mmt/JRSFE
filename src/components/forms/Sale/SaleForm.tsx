@@ -635,9 +635,9 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
   }, [isEditMode, existingOrder]);
 
   const handleCreateCustomer = () => {
-    // Phone is optional at the counter: without a full mobile number the server gives the referral code a random suffix.
-    if (!newCustomer.name.trim()) {
-      toast.error("Name is required.");
+    // Anonymous sales select the existing Cash Customer; a new customer needs a mobile number.
+    if (!newCustomer.name.trim() || !newCustomer.phone.trim()) {
+      toast.error("Name and Phone are required. For an anonymous sale, select Cash Customer instead.");
       return;
     }
 
@@ -673,6 +673,18 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
         });
       },
       onError: (err: any) => {
+        // 409 = the mobile number (or Name + Phone) is already registered: when exactly one loaded customer has that
+        // number, select it through the normal customer selection instead of creating a duplicate.
+        if (err?.response?.status === 409) {
+          const phone = newCustomer.phone.trim();
+          const matches = customers.filter((c: any) => String(c.phone ?? "").trim() === phone);
+          if (matches.length === 1) {
+            setCustomerId(String(matches[0].id));
+            setIsCustomerModalOpen(false);
+            toast.warning(`This mobile number is already registered to ${matches[0].name}. That customer has been selected.`);
+            return;
+          }
+        }
         // Reads every API error shape — incl. the middleware's { error } body used for the 409
         // duplicate-customer response, which data.message alone missed.
         toast.error(getApiErrorMessage(err, "Failed to create customer"));
@@ -2269,11 +2281,11 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
 
                 {/* Phone */}
                 <div>
-                  <Label className="text-sm font-semibold text-gray-700">Phone</Label>
+                  <Label className="text-sm font-semibold text-gray-700">Phone <span className="text-red-500">*</span></Label>
                   <Input
                     value={newCustomer.phone}
                     onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
-                    placeholder="10-digit mobile number (optional)"
+                    placeholder="10-digit mobile number"
                     className="mt-1.5"
                   />
                 </div>
