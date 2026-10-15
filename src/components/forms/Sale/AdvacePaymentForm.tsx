@@ -24,7 +24,9 @@ import {
   Scale,
   Gem,
   Pencil,
+  FileText,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +39,7 @@ import {
   useOrder,
   useCompleteAdvance,
   useEditAdvanceOrder,
+  useGenerateAdvanceInvoice,
 } from "@/hooks/useOrder";
 import { useAllLookUp } from "@/hooks/useLookup";
 import { useWalletByCustomerId } from "@/hooks/useWallet";
@@ -139,7 +142,15 @@ interface ItemCostDetails {
   totalSalePrice?: number;
   totalSalePriceBeforeTax?: number;
   igstPercent?: number;
+  goldMakingChargeRaw?: number;
+  goldMakingChargeType?: string;
+  goldDiscountRaw?: number;
+  goldDiscountType?: string;
 
+  GoldMakingChargeRaw?: number;
+  GoldMakingChargeType?: string;
+  GoldDiscountRaw?: number;
+  GoldDiscountType?: string;
   GoldCost?: number;
   DiamondCost?: number;
   StoneCost?: number;
@@ -167,6 +178,7 @@ interface CartItem {
   grossWeight?: number;
   stoneWeight?: number;
   diamondWeight?: number;
+  diamondCarat?: number;
   netWeight?: number;
   itemCostDetails?: ItemCostDetails;
 
@@ -182,6 +194,7 @@ interface CartItem {
   GrossWeight?: number;
   StoneWeight?: number;
   DiamondWeight?: number;
+  DiamondCarat?: number;
   NetWeight?: number;
   ItemCostDetails?: ItemCostDetails;
 }
@@ -274,6 +287,11 @@ interface EditAdvanceItemDraft {
   diamondWeight: string;
   diamondCarat: string;
   stoneWeight: string;
+  /** Booked gold making charge / discount values; their type (% or fixed) stays as booked. */
+  goldMakingCharge: string;
+  goldMakingChargeType: string;
+  goldDiscount: string;
+  goldDiscountType: string;
 }
 
 interface AdvanceOrderEditItem {
@@ -341,6 +359,7 @@ export default function CompleteAdvanceOrderPage() {
   const completeAdvanceMutation = useCompleteAdvance();
   const invoicePdfMutation = useInvoicePdf();
   const editAdvanceMutation = useEditAdvanceOrder();
+  const generateInvoiceMutation = useGenerateAdvanceInvoice();
 
   const [walletRedeem, setWalletRedeem] = useState("0");
   const [adjustAmount, setAdjustAmount] = useState("0");
@@ -374,6 +393,19 @@ export default function CompleteAdvanceOrderPage() {
     return (cart?.items ?? cart?.Items ?? []) as CartItem[];
   }, [cart]);
 
+  // Shop 7 lifecycle: a Confirmed order without an invoice is reviewed here and invoiced with Generate Invoice; a final
+  // amount above the advance is collected first with the payment form below (same request), an excess advance is
+  // credited to the customer's Return Balance. Once invoiced the page is read-only. The server enforces the same rules.
+  const isInvoiced = !!order?.invoiceId;
+  const isReviewMode = !!order?.isAdvanceOrder && order?.status === "Confirmed" && !isInvoiced;
+  const finalAmount = cartItems.reduce((sum, item) => sum + getItemTotal(item), 0);
+  const amountDifference = Math.round((finalAmount - advanceAmount) * 100) / 100;
+  const isAmountSettled = Math.abs(amountDifference) <= 0.01;
+  const needsBalancePayment = isReviewMode && amountDifference > 0.01;
+  const hasExcessAdvance = isReviewMode && amountDifference < -0.01;
+  // The amount the payment form collects: in review, the final amount above the advance; otherwise the order balance.
+  const payableBalance = isReviewMode ? Math.max(0, amountDifference) : balanceAmount;
+
   const { data: walletData } = useWalletByCustomerId(customer?.id || null) as {
     data?: WalletResponse;
   };
@@ -396,13 +428,13 @@ export default function CompleteAdvanceOrderPage() {
     if (walletData && typeof walletData.rewardBalance === "number") {
       const maxRedeemable = Math.min(
         Math.floor(walletData.rewardBalance),
-        Math.max(0, balanceAmount)
+        Math.max(0, payableBalance)
       );
       setWalletRedeem(String(maxRedeemable));
     } else if (!walletData) {
       setWalletRedeem("0");
     }
-  }, [walletData, balanceAmount]);
+  }, [walletData, payableBalance]);
 
   const paymentConfig: {
     methods: PaymentMethodOption[];
@@ -587,7 +619,7 @@ const caratToGram = (carat: number) => carat * 0.2;
 
     const maxBalance = Math.min(
       Math.floor(walletData.rewardBalance),
-      Math.max(0, balanceAmount)
+      Math.max(0, payableBalance)
     );
     const entered = Number(raw);
 
@@ -613,7 +645,7 @@ const caratToGram = (carat: number) => carat * 0.2;
 
   const currentTotalExpected = Math.max(
     0,
-    balanceAmount - Number(walletRedeem || 0)
+    payableBalance - Number(walletRedeem || 0)
   );
 
   const remainingAmount =
@@ -653,7 +685,7 @@ const caratToGram = (carat: number) => carat * 0.2;
       0
     );
 
-    const expectedTotal = Math.max(0, balanceAmount - Number(walletRedeem || 0));
+    const expectedTotal = Math.max(0, payableBalance - Number(walletRedeem || 0));
     const calculatedAdjustment = expectedTotal - totalPaid;
 
     const hasManualAdjust =
@@ -685,6 +717,26 @@ const caratToGram = (carat: number) => carat * 0.2;
 
     setIsPaymentConfirmOpen(false);
 
+    // Review & Finalize: the balance payment and the final invoice are one request; the order stays Confirmed.
+    if (isReviewMode) {
+      generateInvoiceMutation.mutate(
+        { id: orderId, payload: pendingPaymentPayload },
+        {
+          onSuccess: () => {
+            toast.success("Balance collected and invoice generated. The order is ready for courier dispatch.");
+            setIsInvoicePromptOpen(true);
+          },
+          onError: (err: unknown) => {
+            toast.error(
+              (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+                "Failed to collect the balance; nothing was saved."
+            );
+          },
+        }
+      );
+      return;
+    }
+
     completeAdvanceMutation.mutate(
       { id: orderId, payload: pendingPaymentPayload },
       {
@@ -699,6 +751,27 @@ const caratToGram = (carat: number) => carat * 0.2;
         },
       }
     );
+  };
+
+  const handleGenerateInvoice = () => {
+    if (!orderId) return;
+
+    generateInvoiceMutation.mutate({ id: orderId }, {
+      onSuccess: () => {
+        toast.success(
+          hasExcessAdvance
+            ? `Invoice generated; ₹${Math.abs(amountDifference).toFixed(2)} credited to the customer's Return Balance. The order is ready for courier dispatch.`
+            : "Invoice generated. The order is ready for courier dispatch."
+        );
+        setIsInvoicePromptOpen(true);
+      },
+      onError: (err: unknown) => {
+        toast.error(
+          (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+            "Failed to generate the invoice."
+        );
+      },
+    });
   };
 
   const handleDownloadInvoice = () => {
@@ -732,6 +805,13 @@ const caratToGram = (carat: number) => carat * 0.2;
         const itemKey = getCartItemKey(item, index);
         if (!itemKey) return null;
 
+        const cost = item.itemCostDetails ?? item.ItemCostDetails;
+        // Start from the saved carat (else the saved diamond weight in carat): the draft derives diamond and net weight
+        // from it, so a 0 here would zero the diamond weight of every item on save.
+        const savedDiamondWeight = Number(item.diamondWeight || item.DiamondWeight || 0);
+        const savedDiamondCarat =
+          Number(item.diamondCarat || item.DiamondCarat || 0) || Number((savedDiamondWeight / 0.2).toFixed(3));
+
         return {
           itemKey,
           itemId,
@@ -742,8 +822,12 @@ const caratToGram = (carat: number) => carat * 0.2;
           diamondWeight: String(
             Number(item.diamondWeight || item.DiamondWeight || 0)
           ),
-          diamondCarat: "0",
+          diamondCarat: String(savedDiamondCarat),
           stoneWeight: String(Number(item.stoneWeight || item.StoneWeight || 0)),
+          goldMakingCharge: String(num(cost?.goldMakingChargeRaw ?? cost?.GoldMakingChargeRaw)),
+          goldMakingChargeType: cost?.goldMakingChargeType ?? cost?.GoldMakingChargeType ?? "",
+          goldDiscount: String(num(cost?.goldDiscountRaw ?? cost?.GoldDiscountRaw)),
+          goldDiscountType: cost?.goldDiscountType ?? cost?.GoldDiscountType ?? "",
         } as EditAdvanceItemDraft;
       })
       .filter(Boolean) as EditAdvanceItemDraft[];
@@ -819,8 +903,22 @@ const caratToGram = (carat: number) => carat * 0.2;
         changedFields.stoneWeight = stoneWeight;
       }
 
-      if (diamondCarat !== 0) {
+      const originalDiamondCarat =
+        Number(original.diamondCarat || original.DiamondCarat || 0) ||
+        Number((originalDiamondWeight / 0.2).toFixed(3));
+      if (diamondCarat !== originalDiamondCarat) {
         changedFields.diamondCarat = diamondCarat;
+      }
+
+      // Gold making charge / discount: sent only when changed; the server keeps the booked value and type otherwise.
+      const originalCost = original.itemCostDetails ?? original.ItemCostDetails;
+      const goldMakingCharge = Number(draft.goldMakingCharge || 0);
+      const goldDiscount = Number(draft.goldDiscount || 0);
+      if (goldMakingCharge !== num(originalCost?.goldMakingChargeRaw ?? originalCost?.GoldMakingChargeRaw)) {
+        changedFields.goldMakingCharge = goldMakingCharge;
+      }
+      if (goldDiscount !== num(originalCost?.goldDiscountRaw ?? originalCost?.GoldDiscountRaw)) {
+        changedFields.goldDiscount = goldDiscount;
       }
 
       if (Object.keys(changedFields).length > 0) {
@@ -841,13 +939,15 @@ const caratToGram = (carat: number) => carat * 0.2;
     editAdvanceMutation.mutate(
       { id: orderId, payload },
       {
-        onSuccess: () => {
+        onSuccess: (data: { couponNotice?: string | null } | undefined) => {
           toast.success("Advance order items updated successfully.");
+          if (data?.couponNotice) toast.warning(data.couponNotice);
           setIsEditItemsOpen(false);
         },
         onError: (err: any) => {
           toast.error(
-            err?.response?.data?.message ||
+            err?.response?.data?.error ||
+              err?.response?.data?.message ||
               "Failed to update advance order items."
           );
         },
@@ -899,7 +999,11 @@ const caratToGram = (carat: number) => carat * 0.2;
           <div>
             <h2 className="flex items-center gap-2 text-lg font-bold text-gray-800">
               <Tag className="h-5 w-5 fill-current text-[#b08d28]" />
-              Complete Advance Order
+              {isReviewMode
+                ? "Review & Finalize Advance Order"
+                : isInvoiced
+                ? "Advance Order · Invoiced"
+                : "Complete Advance Order"}
             </h2>
 
             <div className="mt-1.5 flex flex-wrap items-center gap-3">
@@ -957,7 +1061,7 @@ const caratToGram = (carat: number) => carat * 0.2;
               </p>
               <p className="text-2xl font-bold text-green-700 md:text-3xl">
                 ₹
-                {balanceAmount.toLocaleString(undefined, {
+                {payableBalance.toLocaleString(undefined, {
                   maximumFractionDigits: 2,
                 })}
               </p>
@@ -986,11 +1090,11 @@ const caratToGram = (carat: number) => carat * 0.2;
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Grand Total
+              {isReviewMode ? "Final Amount" : "Grand Total"}
             </p>
             <p className="mt-2 text-lg font-bold text-slate-900">
               ₹
-              {finalGrandTotal.toLocaleString(undefined, {
+              {(isReviewMode ? finalAmount : finalGrandTotal).toLocaleString(undefined, {
                 maximumFractionDigits: 2,
               })}
             </p>
@@ -1008,17 +1112,48 @@ const caratToGram = (carat: number) => carat * 0.2;
             </p>
           </div>
 
-          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-green-600">
-              Balance Pending
-            </p>
-            <p className="mt-2 text-lg font-bold text-green-900">
-              ₹
-              {balanceAmount.toLocaleString(undefined, {
-                maximumFractionDigits: 2,
-              })}
-            </p>
-          </div>
+          {isReviewMode ? (
+            <div
+              className={cn(
+                "rounded-xl border p-4",
+                isAmountSettled ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"
+              )}
+            >
+              <p
+                className={cn(
+                  "text-xs font-semibold uppercase tracking-wide",
+                  isAmountSettled ? "text-green-600" : "text-red-600"
+                )}
+              >
+                Difference (Final − Advance)
+              </p>
+              <p className={cn("mt-2 text-lg font-bold", isAmountSettled ? "text-green-900" : "text-red-800")}>
+                {amountDifference < 0 ? "−" : ""}₹
+                {Math.abs(amountDifference).toLocaleString(undefined, {
+                  maximumFractionDigits: 2,
+                })}
+              </p>
+              <p className={cn("mt-1 text-xs", isAmountSettled ? "text-green-700" : "text-red-700")}>
+                {isAmountSettled
+                  ? "Settled — the advance covers the final amount."
+                  : amountDifference > 0
+                  ? "Balance due — collect it with the payment form below."
+                  : "Excess advance — credited to the customer's Return Balance on invoice."}
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-green-600">
+                Balance Pending
+              </p>
+              <p className="mt-2 text-lg font-bold text-green-900">
+                ₹
+                {balanceAmount.toLocaleString(undefined, {
+                  maximumFractionDigits: 2,
+                })}
+              </p>
+            </div>
+          )}
         </div>
 
         {cartItems.length > 0 && (
@@ -1036,16 +1171,18 @@ const caratToGram = (carat: number) => carat * 0.2;
                   {cartItems.length} item{cartItems.length > 1 ? "s" : ""}
                 </span>
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={openEditItemsDialog}
-                  className="border-amber-300 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
-                >
-                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                  Edit Items
-                </Button>
+                {!isInvoiced && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={openEditItemsDialog}
+                    className="border-amber-300 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
+                  >
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                    Edit Items
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1185,6 +1322,83 @@ const caratToGram = (carat: number) => carat * 0.2;
           </div>
         )}
 
+        {isReviewMode && (
+          <div className="mt-6 space-y-4 border-t border-gray-100 pt-6">
+            <h4 className="flex items-center gap-2 text-lg font-bold text-gray-800">
+              <FileText className="h-5 w-5 text-indigo-600" />
+              Generate Final Invoice
+            </h4>
+
+            <p className="text-sm text-gray-600">
+              Review the prepared jewellery above and adjust it with Edit Items if needed. The advance already paid is
+              applied to the invoice; it is never recorded again.
+            </p>
+
+            {needsBalancePayment && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                The final amount exceeds the advance paid by ₹
+                {amountDifference.toLocaleString(undefined, { maximumFractionDigits: 2 })}. Collect the balance with the
+                payment form below; the invoice is generated together with the payment.
+              </div>
+            )}
+
+            {hasExcessAdvance && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
+                The advance paid exceeds the final amount by ₹
+                {Math.abs(amountDifference).toLocaleString(undefined, { maximumFractionDigits: 2 })}. Generating the
+                invoice credits this amount to the customer's Return Balance (wallet).
+              </div>
+            )}
+
+            {!needsBalancePayment && (
+              <div className="flex flex-col gap-4 sm:flex-row">
+                <Button
+                  className="h-12 w-full bg-indigo-600 text-base text-white shadow-md transition-all hover:bg-indigo-700 sm:w-1/2"
+                  onClick={handleGenerateInvoice}
+                  disabled={generateInvoiceMutation.isPending}
+                >
+                  {generateInvoiceMutation.isPending ? (
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  ) : (
+                    <FileText className="mr-2 h-5 w-5" />
+                  )}
+                  Generate Invoice
+                </Button>
+
+                <Button
+                  variant="outline"
+                  className="h-12 w-full border-gray-300 text-gray-600 hover:bg-gray-50 sm:w-1/4"
+                  onClick={() => navigate("/admin/advance-order")}
+                >
+                  Back
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isInvoiced && (
+          <div className="mt-6 flex flex-col gap-4 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-gray-600">
+              The invoice has been generated; this order can no longer be edited.
+            </p>
+            <Button
+              variant="outline"
+              className="h-11"
+              onClick={handleDownloadInvoice}
+              disabled={invoicePdfMutation.isPending}
+            >
+              {invoicePdfMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="mr-2 h-4 w-4" />
+              )}
+              Download Invoice
+            </Button>
+          </div>
+        )}
+
+        {((!isReviewMode && !isInvoiced) || needsBalancePayment) && (<>
         <div className="mb-6 mt-6">
           <Label className="mb-2 block text-sm font-semibold text-gray-700">
             Wallet Redeem Amount (optional)
@@ -1370,7 +1584,7 @@ const caratToGram = (carat: number) => carat * 0.2;
                   <span className="mr-1 text-gray-500">Remaining Balance:</span>
                   <span className="font-semibold text-gray-800">
                     ₹
-                    {balanceAmount.toLocaleString(undefined, {
+                    {payableBalance.toLocaleString(undefined, {
                       maximumFractionDigits: 2,
                     })}
                   </span>
@@ -1492,7 +1706,7 @@ const caratToGram = (carat: number) => carat * 0.2;
                     }`}
                     onClick={() => {
                       const expectedTotal =
-                        balanceAmount - (Number(walletRedeem) || 0);
+                        payableBalance - (Number(walletRedeem) || 0);
                       const difference = expectedTotal - currentTotalPaid;
                       setAdjustAmount(difference.toFixed(2));
                     }}
@@ -1532,23 +1746,24 @@ const caratToGram = (carat: number) => carat * 0.2;
             <Button
               className="h-12 w-full bg-indigo-600 text-base text-white shadow-md transition-all hover:bg-indigo-700 sm:w-1/2"
               onClick={handleFinalizePaymentClick}
-              disabled={completeAdvanceMutation.isPending}
+              disabled={completeAdvanceMutation.isPending || generateInvoiceMutation.isPending}
             >
-              {completeAdvanceMutation.isPending ? (
+              {completeAdvanceMutation.isPending || generateInvoiceMutation.isPending ? (
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
               ) : null}
-              Confirm Payment
+              {isReviewMode ? "Collect Balance & Generate Invoice" : "Confirm Payment"}
             </Button>
 
             <Button
               variant="outline"
               className="h-12 w-full border-gray-300 text-gray-600 hover:bg-gray-50 sm:w-1/4"
-              onClick={() => navigate("/admin/sale")}
+              onClick={() => navigate(isReviewMode ? "/admin/advance-order" : "/admin/sale")}
             >
               Cancel
             </Button>
           </div>
         </div>
+        </>)}
       </div>
 
       <Dialog open={isPaymentConfirmOpen} onOpenChange={setIsPaymentConfirmOpen}>
@@ -1562,8 +1777,9 @@ const caratToGram = (carat: number) => carat * 0.2;
 
           <div className="py-4 text-sm text-gray-600">
             <p className="mb-4">
-              Are you sure you want to complete this advance order? This will
-              settle the remaining balance and finalize the transaction.
+              {isReviewMode
+                ? "This records the balance payment and generates the final invoice. The order stays confirmed for courier dispatch."
+                : "Are you sure you want to complete this advance order? This will settle the remaining balance and finalize the transaction."}
             </p>
 
             <div className="flex flex-col gap-2 rounded-lg border border-green-100 bg-green-50 p-4">
@@ -1573,7 +1789,7 @@ const caratToGram = (carat: number) => carat * 0.2;
                 </span>
                 <span className="font-bold text-green-900">
                   ₹
-                  {balanceAmount.toLocaleString(undefined, {
+                  {payableBalance.toLocaleString(undefined, {
                     maximumFractionDigits: 2,
                   })}
                 </span>
@@ -1629,10 +1845,10 @@ const caratToGram = (carat: number) => carat * 0.2;
             <Button
               type="button"
               onClick={handleConfirmCompleteAdvancePayment}
-              disabled={completeAdvanceMutation.isPending}
+              disabled={completeAdvanceMutation.isPending || generateInvoiceMutation.isPending}
               className="min-w-[160px] bg-green-600 text-white hover:bg-green-700"
             >
-              {completeAdvanceMutation.isPending ? (
+              {completeAdvanceMutation.isPending || generateInvoiceMutation.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : null}
               Confirm Complete
@@ -1652,8 +1868,7 @@ const caratToGram = (carat: number) => carat * 0.2;
 
           <div className="py-4 text-sm text-gray-600">
             <p>
-              Order completed successfully. Do you want to download the invoice
-              now?
+              The invoice has been generated. Do you want to download it now?
             </p>
           </div>
 
@@ -1811,6 +2026,34 @@ const caratToGram = (carat: number) => carat * 0.2;
                 e.target.value
               )
             }
+          />
+        </div>
+
+        <div>
+          <Label className="mb-1 block text-xs font-semibold text-gray-600">
+            Gold Making Charge{item.goldMakingChargeType ? ` (${item.goldMakingChargeType})` : ""}
+          </Label>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            className="h-10"
+            value={item.goldMakingCharge}
+            onChange={(e) => updateEditDraftItem(item.itemKey, "goldMakingCharge", e.target.value)}
+          />
+        </div>
+
+        <div>
+          <Label className="mb-1 block text-xs font-semibold text-gray-600">
+            Gold Discount{item.goldDiscountType ? ` (${item.goldDiscountType})` : ""}
+          </Label>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            className="h-10"
+            value={item.goldDiscount}
+            onChange={(e) => updateEditDraftItem(item.itemKey, "goldDiscount", e.target.value)}
           />
         </div>
       </div>

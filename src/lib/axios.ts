@@ -30,8 +30,10 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     const message = error?.response?.data?.details;
+    // A failed sign-in is reported on the login form itself; redirecting would reload the page and lose the message.
+    const isLoginRequest = String(error?.config?.url ?? '').endsWith('/auth/login');
 
-    if (message?.includes('not authenticated') || error.status === 401) {
+    if (!isLoginRequest && (message?.includes('not authenticated') || error.status === 401)) {
       localStorage.clear();
       window.location.href = '/login';
     }

@@ -635,8 +635,9 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
   }, [isEditMode, existingOrder]);
 
   const handleCreateCustomer = () => {
-    if (!newCustomer.name || !newCustomer.phone) {
-      toast.error("Name and Phone are required.");
+    // Anonymous sales select the existing Cash Customer; a new customer needs a mobile number.
+    if (!newCustomer.name.trim() || !newCustomer.phone.trim()) {
+      toast.error("Name and Phone are required. For an anonymous sale, select Cash Customer instead.");
       return;
     }
 
@@ -672,6 +673,18 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
         });
       },
       onError: (err: any) => {
+        // 409 = the mobile number (or Name + Phone) is already registered: when exactly one loaded customer has that
+        // number, select it through the normal customer selection instead of creating a duplicate.
+        if (err?.response?.status === 409) {
+          const phone = newCustomer.phone.trim();
+          const matches = customers.filter((c: any) => String(c.phone ?? "").trim() === phone);
+          if (matches.length === 1) {
+            setCustomerId(String(matches[0].id));
+            setIsCustomerModalOpen(false);
+            toast.warning(`This mobile number is already registered to ${matches[0].name}. That customer has been selected.`);
+            return;
+          }
+        }
         // Reads every API error shape — incl. the middleware's { error } body used for the 409
         // duplicate-customer response, which data.message alone missed.
         toast.error(getApiErrorMessage(err, "Failed to create customer"));

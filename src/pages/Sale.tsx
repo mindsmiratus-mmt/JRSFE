@@ -27,6 +27,8 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { getModulePermissions } from "@/utils/permission";
 import { useInvoicePdf } from "@/hooks/useInvoice";
+import { ConfirmOrderButton } from "@/components/advance-order/ConfirmOrderButton";
+import { ReviewFinalizeButton } from "@/components/advance-order/ReviewFinalizeButton";
 import {
   useOrderList,
   useCancelOrder,
@@ -320,8 +322,12 @@ export const Sale = () => {
   const isPendingAdvanceOrder = (order: any) =>
     !!order.isAdvanceOrder && order.status === "PendingPayment";
 
+  // Shop 7 lifecycle after payment confirmation (invoice exists): Confirmed → Shipped → Delivered.
+  const isConfirmedLifecycle = (order: { isAdvanceOrder?: boolean; status?: string }) =>
+    !!order.isAdvanceOrder && ["Confirmed", "Shipped", "Delivered"].includes(String(order.status));
+
   const isPaidAdvanceOrder = (order: any) =>
-    !!order.isAdvanceOrder && order.status === "Closed";
+    !!order.isAdvanceOrder && (order.status === "Closed" || isConfirmedLifecycle(order));
 
   const shouldShowAdvanceReceipt = (order: any) => isPendingAdvanceOrder(order);
 
@@ -796,8 +802,11 @@ export const Sale = () => {
                 label: "Action",
                 render: (r: any) => (
                   <div className="flex flex-wrap items-center gap-2">
-                    {r.status !== "Closed" &&r.status !== "Cancelled" && hasUpdate ? (
+                    {r.status !== "Closed" &&r.status !== "Cancelled" && !isConfirmedLifecycle(r) && hasUpdate ? (
                       <>
+                      {r.canConfirmOrder ? (
+                        <ConfirmOrderButton orderId={r.id} orderNo={r.orderNo} className="h-8" />
+                      ) : (
                       <Button
                         size="sm"
                         variant="default"
@@ -812,6 +821,7 @@ export const Sale = () => {
                         <CreditCard className="w-4 h-4 mr-2" />
                         {r.isAdvanceOrder ? "Pay Balance" : "Pay Now"}
                       </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="icon"
@@ -824,6 +834,10 @@ export const Sale = () => {
                         <Trash2 className="w-4 h-4" />
                       </Button>
                     </>
+                    ) : null}
+
+                    {hasUpdate && r.canFinalize ? (
+                      <ReviewFinalizeButton orderId={r.id} className="h-8" />
                     ) : null}
 
                     {shouldShowInvoice(r) ? (
@@ -1087,8 +1101,11 @@ export const Sale = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 justify-end">
-                      {order.status !== "Closed" && order.status !== "Cancelled" && hasUpdate ? (
+                      {order.status !== "Closed" && order.status !== "Cancelled" && !isConfirmedLifecycle(order) && hasUpdate ? (
                         <>
+                        {order.canConfirmOrder ? (
+                          <ConfirmOrderButton orderId={order.id} orderNo={order.orderNo} className="shadow-sm h-9" />
+                        ) : (
                         <Button
                           size="sm"
                           variant="default"
@@ -1101,6 +1118,7 @@ export const Sale = () => {
                           <CreditCard className="w-4 h-4 mr-2" />
                           {order.isAdvanceOrder ? "Pay Balance" : "Pay"}
                         </Button>
+                        )}
                         
                         <Button
                           variant="outline"
@@ -1114,6 +1132,10 @@ export const Sale = () => {
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </>
+                      ) : null}
+
+                      {hasUpdate && order.canFinalize ? (
+                        <ReviewFinalizeButton orderId={order.id} className="shadow-sm h-9" />
                       ) : null}
 
                       {shouldShowInvoice(order) ? (

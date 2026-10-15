@@ -193,6 +193,42 @@ export const useCompleteAdvance = () => {
   });
 };
 
+/** Shop 7 advance order: confirm the order (preparation starts) — status → Confirmed. No invoice, no payment. */
+export const useConfirmAdvanceOrder = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const { data } = await api.post(`${API_BASE}/${id}/confirm-order`);
+      return data;
+    },
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["order", id] });
+      queryClient.invalidateQueries({ queryKey: ["orderList"] });
+    },
+  });
+};
+
+/** Shop 7 confirmed advance order, reviewed: generate the final invoice from the advance already paid (no new payment). */
+export const useGenerateAdvanceInvoice = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    // payload (the Pay Balance form) only when the final amount exceeds the advance paid.
+    mutationFn: async ({ id, payload }: { id: number; payload?: CompleteAdvancePayload }) => {
+      const { data } = await api.post<{ invoiceId: number }>(`${API_BASE}/${id}/generate-invoice`, payload);
+      return data;
+    },
+    onSuccess: async (_data, { id }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["order", id] }),
+        queryClient.invalidateQueries({ queryKey: ["orderList"] }),
+        queryClient.invalidateQueries({ queryKey: ["wallet"] }),
+      ]);
+    },
+  });
+};
+
 export const useEditAdvanceOrder = () => {
   const queryClient = useQueryClient();
 
