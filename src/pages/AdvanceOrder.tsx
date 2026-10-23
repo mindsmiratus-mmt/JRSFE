@@ -35,6 +35,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { CourierDetails } from "@/components/advance-order/CourierDetails";
 import { ConfirmOrderButton } from "@/components/advance-order/ConfirmOrderButton";
 import { ReviewFinalizeButton } from "@/components/advance-order/ReviewFinalizeButton";
+import { BoxSlipButton } from "@/components/advance-order/BoxSlipButton";
 import { hasCourierSection, type CourierOrder } from "@/components/advance-order/courier";
 
 type AdvanceOrderRow = CourierOrder & {
@@ -52,6 +53,8 @@ type AdvanceOrderRow = CourierOrder & {
   canConfirmOrder?: boolean;
   /** Server-computed: Shop 7 confirmed advance order awaiting review and invoice (Confirmed, no invoice). */
   canFinalize?: boolean;
+  /** Server-computed: Shop 7 advance order, Confirmed, Shipped or Delivered — the courier box slip may be printed. */
+  canPrintBoxSlip?: boolean;
   invoice?: {
     id?: number;
     invoiceNo?: string;
@@ -626,6 +629,8 @@ export const AdvanceOrder = () => {
                       Invoice
                     </Button>
                   )}
+
+                  {r.canPrintBoxSlip && <BoxSlipButton orderId={r.id} orderNo={r.orderNo} />}
                 </div>
               ),
             },
@@ -838,6 +843,8 @@ export const AdvanceOrder = () => {
                         Invoice
                       </Button>
                     )}
+
+                    {order.canPrintBoxSlip && <BoxSlipButton orderId={order.id} orderNo={order.orderNo} />}
 
                     {/* {hasUpdate && (
                       <Button size="sm" onClick={() => handlePayClick(order)}>

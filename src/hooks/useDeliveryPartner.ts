@@ -122,6 +122,42 @@ export const useSaveCourierDetails = () => {
     });
 };
 
+export interface BoxSlipParty {
+    name: string;
+    phone?: string | null;
+    addressLine1?: string | null;
+    addressLine2?: string | null;
+    landmark?: string | null;
+    city?: string | null;
+    state?: string | null;
+    pinCode?: string | null;
+    country?: string | null;
+}
+
+/** GET api/order/{id}/box-slip — read-only print data: TO (order address), FROM / return (order's shop), references. */
+export interface BoxSlip {
+    orderId: number;
+    orderNo: string;
+    status: string;
+    sender: BoxSlipParty;
+    deliverTo?: BoxSlipParty | null;
+    /** ShipTo | BillTo (order snapshots) | CustomerProfile (old order without a snapshot) */
+    deliverToSource?: string | null;
+    invoiceNo?: string | null;
+    warnings: string[];
+}
+
+/** Always refetched on open so a reprint shows the latest data. */
+export const useBoxSlip = (orderId: number, enabled: boolean) =>
+    useQuery<BoxSlip>({
+        queryKey: ['boxSlip', orderId],
+        queryFn: async () => (await api.get<BoxSlip>(`/order/${orderId}/box-slip`)).data,
+        enabled,
+        staleTime: 0,
+        gcTime: 0,
+        retry: false,
+    });
+
 export const useMarkDelivered = () => {
     const queryClient = useQueryClient();
     return useMutation<CourierSaveResponse, unknown, MarkDeliveredData>({

@@ -29,6 +29,8 @@ import { getModulePermissions } from "@/utils/permission";
 import { useInvoicePdf } from "@/hooks/useInvoice";
 import { ConfirmOrderButton } from "@/components/advance-order/ConfirmOrderButton";
 import { ReviewFinalizeButton } from "@/components/advance-order/ReviewFinalizeButton";
+import { CourierDetails } from "@/components/advance-order/CourierDetails";
+import { hasCourierSection, type CourierOrder } from "@/components/advance-order/courier";
 import {
   useOrderList,
   useCancelOrder,
@@ -222,6 +224,9 @@ export const Sale = () => {
       };
     });
   }, [rawOrders]);
+
+  // Same rule as the Advance Orders page: the column appears once any order may (or does) carry courier details.
+  const showCourier = useMemo(() => normalizedOrders.some(hasCourierSection), [normalizedOrders]);
 
   const filteredOrders = useMemo(() => {
     return normalizedOrders.filter((order: any) => {
@@ -781,6 +786,15 @@ export const Sale = () => {
                   </span>
                 ),
               },
+              ...(showCourier
+                ? [
+                    {
+                      key: "courier",
+                      label: "Courier",
+                      render: (r: CourierOrder) => <CourierDetails order={r} />,
+                    },
+                  ]
+                : []),
               {
                 key: "status",
                 label: "Status",
@@ -1088,6 +1102,8 @@ export const Sale = () => {
                         </div>
                       </div>
                     </div>
+
+                    <CourierDetails order={order} variant="card" />
                   </div>
 
                   <div className="p-4 border-t rounded-b-xl flex justify-between items-center gap-2 bg-white">
