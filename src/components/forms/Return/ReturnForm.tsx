@@ -34,6 +34,7 @@ interface RichInvoiceItem {
   id: number;
   invoiceId: number;
   itemId: number;
+  pricingModel?: string | null;
   brand?: string;
   tagNumber?: string;
   itemName?: string;
@@ -114,6 +115,7 @@ type EditableFields = Pick<
 // We extend ReturnItemPayload with UI flags for selection and alreadyReturned
 type ReturnItemWithFlags = ReturnItemPayload & {
   selected: boolean;        // whether this item is selected to be returned now
+  isMrp?: boolean;          // MRP item: refunds its invoice amount (set by the server), so it has no editable rates
   alreadyReturned: boolean; // whether invoice says this item was already returned
 };
 
@@ -740,6 +742,7 @@ export const ReturnForm = ({ onCancel }: ReturnFormProps) => {
         igstPercent: it.igstPercent,
         // By default, full sale price is returned for selectable items.
         totalReturnPrice: it.totalSalePrice,
+        isMrp: String(it.pricingModel ?? "").trim().toUpperCase() === "MRP",
         selected: !alreadyReturned,
         alreadyReturned,
       };
@@ -765,6 +768,10 @@ export const ReturnForm = ({ onCancel }: ReturnFormProps) => {
   const openEditDialog = (index: number) => {
     const item = returnItems[index];
     if (!item || item.alreadyReturned || !item.selected) return;
+    if (item.isMrp) {
+      toast.info("This MRP item refunds the amount paid on the invoice; there are no rates to edit.");
+      return;
+    }
 
     const values: EditableFields = {
       grossWeight: item.grossWeight ?? 0,

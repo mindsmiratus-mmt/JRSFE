@@ -39,6 +39,7 @@ import {
     type CalculateSalePriceResponse,
 } from "@/hooks/useStockEntry";
 import { useAllLookUp } from "@/hooks/useLookup";
+import { getApiErrorMessage } from "@/utils/formInput";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { useAllCategory, useCreateCategory } from "@/hooks/useCategory";
 import { useCurrentRatePurities, useCurrentRate } from "@/hooks/useCurruntrate";
@@ -118,6 +119,9 @@ const CategorySchema = Yup.object().shape({
 });
 
 
+// MRP items (Pricing Model "MRP"): Sale Price is the per-piece MRP including GST; purity and weights are not needed.
+const isMrpModel = (pricingModel?: string | null) => (pricingModel ?? "").trim().toUpperCase() === "MRP";
+
 // ========================
 // Validation Schema
 // ========================
@@ -128,17 +132,20 @@ const StockEntrySchema = Yup.object().shape({
     itemName: Yup.string().required("Item name is required"),
     huid: Yup.string().trim().notRequired(),
     showOnWebsite: Yup.boolean().required(),
-    isBulkItem: Yup.boolean().required(),
+    isBulkItem: Yup.boolean().required()
+        .test("mrp-not-bulk", "An MRP item cannot be a bulk item", function (value) {
+            return !(value && isMrpModel(this.parent.pricingModel));
+        }),
     modeOfStock: Yup.string().required("Mode of stock is required"),
-    caratOrKT: Yup.string().when("metal", {
-        is: (metal: string) => !!metal && metal !== "Diamond" && metal !== "Others",
+    caratOrKT: Yup.string().when(["metal", "pricingModel"], {
+        is: (metal: string, pricingModel: string) => !isMrpModel(pricingModel) && !!metal && metal !== "Diamond" && metal !== "Others",
         then: () => Yup.string().required("Purity ID is required"),
         otherwise: () => Yup.string().notRequired(),
     }),
     diamondCarat: Yup.number()
         .typeError("Diamond carat must be a number")
-        .when("metal", {
-            is: "Diamond",
+        .when(["metal", "pricingModel"], {
+            is: (metal: string, pricingModel: string) => metal === "Diamond" && !isMrpModel(pricingModel),
             then: (schema) => schema
                 .min(0.001, "Carat must be greater than 0")
                 .required("Diamond carat is required"),
@@ -154,8 +161,8 @@ const StockEntrySchema = Yup.object().shape({
     pricingModel: Yup.string()  // Add this new field
         .required("Pricing model is required")
         .typeError("Pricing model must be selected"),
-    purityPercent: Yup.number().when("metal", {
-        is: (metal: string) => metal === "Diamond" || metal === "Others",
+    purityPercent: Yup.number().when(["metal", "pricingModel"], {
+        is: (metal: string, pricingModel: string) => isMrpModel(pricingModel) || metal === "Diamond" || metal === "Others",
         then: (schema) => schema.notRequired(),
         otherwise: (schema) =>
             schema
@@ -165,8 +172,8 @@ const StockEntrySchema = Yup.object().shape({
                 .required("Purity percent is required"),
     }),
     stoneName: Yup.string().notRequired(),
-    dPurityId: Yup.string().when(["metal", "diamondCarat"], {
-        is: (metal: string, diamondCarat: number) => metal === "Diamond" || diamondCarat > 0,
+    dPurityId: Yup.string().when(["metal", "diamondCarat", "pricingModel"], {
+        is: (metal: string, diamondCarat: number, pricingModel: string) => !isMrpModel(pricingModel) && (metal === "Diamond" || diamondCarat > 0),
         then: () => Yup.string().required("Diamond purity is required"),
         otherwise: () => Yup.string().notRequired(),
     }),
@@ -177,13 +184,24 @@ const StockEntrySchema = Yup.object().shape({
     silverPurity: Yup.string().notRequired(),
     quantity: Yup.number()
         .typeError("Quantity must be a number")
-        .min(1, "Quantity must be at least 1")
+        .integer("Quantity must be a whole number")
+        // 0 = not in the store, made on order; a bulk item tracks physical batches, so it needs at least one.
+        .when("isBulkItem", {
+            is: true,
+            then: (schema) => schema.min(1, "A bulk item needs a quantity of at least 1"),
+            otherwise: (schema) => schema.min(0, "Quantity cannot be negative"),
+        })
         .required("Quantity is required"),
     hsnCode: Yup.string().trim().notRequired(),
     grossWeight: Yup.number()
         .typeError("Gross weight must be a number")
-        .min(0.001, "Gross weight must be greater than zero")
-        .required("Gross weight is required")
+        .when("pricingModel", {
+            is: (pricingModel: string) => isMrpModel(pricingModel),
+            then: (schema) => schema.min(0, "Gross weight cannot be negative").notRequired(),
+            otherwise: (schema) => schema
+                .min(0.001, "Gross weight must be greater than zero")
+                .required("Gross weight is required"),
+        })
         .test(
             "equals-sum",
             "Gross weight must equal stone weight + diamond weight + net weight",
@@ -218,8 +236,8 @@ const StockEntrySchema = Yup.object().shape({
         .typeError("Net weight must be a number")
         .min(0, "Net weight cannot be negative")
         .required("Net weight will be calculated automatically"),
-    pureWeight: Yup.number().when("metal", {
-        is: "Diamond",
+    pureWeight: Yup.number().when(["metal", "pricingModel"], {
+        is: (metal: string, pricingModel: string) => metal === "Diamond" || isMrpModel(pricingModel),
         then: (schema) => schema.notRequired(),
         otherwise: (schema) => schema.required(),
     }),
@@ -267,16 +285,16 @@ saleDiamondDiscountType: Yup.string().notRequired(),
         .typeError("Purchase gold rate must be a number")
         .min(0, "Purchase gold rate cannot be negative")
         .max(9999999999.99, "Purchase gold rate cannot exceed 6 digits")
-        .when("metal", {
-            is: "Gold",
+        .when(["metal", "pricingModel"], {
+            is: (metal: string, pricingModel: string) => metal === "Gold" && !isMrpModel(pricingModel),
             then: (schema) => schema.required("Purchase gold rate is required for gold"),
         }),
     purchaseDiamondRate: Yup.number()
         .typeError("Purchase diamond rate must be a number")
         .min(0, "Purchase diamond rate cannot be negative")
         .max(9999999999.99, "Purchase diamond rate cannot exceed 6 digits")
-        .when(["metal", "diamondCarat"], {
-            is: (metal: string, diamondCarat: number) => metal === "Diamond" || diamondCarat > 0,
+        .when(["metal", "diamondCarat", "pricingModel"], {
+            is: (metal: string, diamondCarat: number, pricingModel: string) => !isMrpModel(pricingModel) && (metal === "Diamond" || diamondCarat > 0),
             then: (schema) => schema.required("Purchase diamond rate is required"),
         }),
     purchaseStonePrice: Yup.number()
@@ -295,6 +313,16 @@ saleDiamondDiscountType: Yup.string().notRequired(),
             then: (schema) => schema.required("Stone sale price is required when stone is selected"),
         }),
     purchaseDate: Yup.string().required("Purchase date is required"),
+    salePrice: Yup.number()
+        .transform((value, originalValue) =>
+            originalValue === "" || originalValue == null ? undefined : value
+        )
+        .typeError("MRP must be a number")
+        .when("pricingModel", {
+            is: (pricingModel: string) => isMrpModel(pricingModel),
+            then: (schema) => schema.moreThan(0, "MRP must be greater than zero").required("MRP is required"),
+            otherwise: (schema) => schema.notRequired(),
+        }),
 });
 
 // ========================
@@ -391,7 +419,7 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
         cut: stockEntry?.cut || "",
         shape: stockEntry?.shape || "",
         silverPurity: stockEntry?.silverPurity || "",
-        quantity: stockEntry?.quantity || 1,
+        quantity: stockEntry?.quantity ?? 1,
         grossWeight: stockEntry?.grossWeight ? Number(stockEntry.grossWeight.toFixed(3)) : 0,
         stoneWeight: stockEntry?.stoneWeight ? Number(stockEntry.stoneWeight.toFixed(3)) : 0,
         diamondWeight: stockEntry?.diamondWeight ? Number(stockEntry.diamondWeight.toFixed(3)) : 0,
@@ -650,7 +678,13 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
             diamondCarat: Number(values.diamondCarat || 0),
             // color: values.color || "",
             color: values.color?.length ? values.color.join(",") : "",
-            salePrice: salePriceData?.totalSalePrice ? Number(salePriceData.totalSalePrice.toFixed(2)) : 0,
+            // MRP item: the MRP entered. Otherwise the calculated price, else (editing without recalculating) the
+            // price already saved — never silently 0.
+            salePrice: isMrpModel(values.pricingModel)
+                ? Number(Number(values.salePrice || 0).toFixed(2))
+                : salePriceData?.totalSalePrice
+                    ? Number(salePriceData.totalSalePrice.toFixed(2))
+                    : (stockEntry?.salePrice ?? 0),
         };
 
 
@@ -680,7 +714,8 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
             }
         } catch (err: any) {
             console.error("Stock entry save error:", err);
-            toast.error(err?.response?.data?.message || "Failed to save stock entry");
+            // The server's own message (e.g. an MRP rule, or ASP.NET's field validation errors) when it gave one.
+            toast.error(getApiErrorMessage(err, "Failed to save stock entry"));
         } finally {
             setSubmitting(false);
         }
@@ -1226,9 +1261,11 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
                                         </div>
                                         <div className="space-y-2">
                                             <Label className="text-xs text-muted-foreground">Quantity *</Label>
-                                            <Field placeholder="Enter quantity" as={Input} type="number" name="quantity" />
-                                            {touched.quantity && errors.quantity && (
+                                            <Field placeholder="Enter quantity" as={Input} type="number" name="quantity" min={values.isBulkItem ? 1 : 0} />
+                                            {touched.quantity && errors.quantity ? (
                                                 <p className="text-sm text-red-500">{errors.quantity}</p>
+                                            ) : String(values.quantity) === "0" && (
+                                                <p className="text-xs text-muted-foreground">0 = not in store, made on order. Shown online only if the shop allows ecommerce backorder; not approved for POS sale until quantity is updated.</p>
                                             )}
                                         </div>
                                         <div className="space-y-2">
@@ -2253,7 +2290,8 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
                                                     <SelectValue placeholder="Select type" />
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    {lookup?.pricingModel?.map((item: string) => (
+                                                    {/* /Lookup lists every supported pricing model (incl. MRP); /Shop/lookup is the raw config list. */}
+                                                    {(lookupData?.pricingModel ?? lookup?.pricingModel)?.map((item: string) => (
                                                         <SelectItem key={item} value={item}>
                                                             {item}
                                                         </SelectItem>
@@ -2267,8 +2305,42 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
                                     </div>
 
 
+                                    {/* MRP item: the MRP (incl. GST) is the selling price; the jewellery calculation below does not apply. */}
+                                    {isMrpModel(values.pricingModel) && (
+                                        <div className="space-y-2 pt-2 border-t">
+                                            <Label className="text-xs text-muted-foreground">MRP per piece (incl. GST) *</Label>
+                                            <Input
+                                                type="text"
+                                                placeholder="MRP"
+                                                value={values.salePrice ? values.salePrice.toString() : ""}
+                                                onChange={(e) => {
+                                                    const input = e.target.value.replace(/[^0-9.]/g, "");
+                                                    const parts = input.split(".");
+                                                    if (parts.length > 2) return;
+                                                    const integer = (parts[0] || "").slice(0, 10);
+                                                    const decimal = (parts[1] || "").slice(0, 2);
+                                                    const newInput = integer + (input.includes(".") ? "." + decimal : "");
+                                                    setFieldValue("salePrice", newInput === "" ? undefined : newInput);
+                                                }}
+                                                onBlur={(e) => {
+                                                    const val = e.target.value === "" ? undefined : Number(parseFloat(e.target.value).toFixed(2));
+                                                    setFieldValue("salePrice", val);
+                                                }}
+                                            />
+                                            {touched.salePrice && errors.salePrice && (
+                                                <p className="text-sm text-red-500">{errors.salePrice as string}</p>
+                                            )}
+                                            {errors.isBulkItem && (
+                                                <p className="text-sm text-red-500">{errors.isBulkItem as string}</p>
+                                            )}
+                                            <p className="text-xs text-muted-foreground">
+                                                The customer pays this MRP (GST included) per piece. "Sale Discount on Making" and its type apply as a discount on the MRP.
+                                            </p>
+                                        </div>
+                                    )}
+
                                     {/* ✅ Show ONLY in Edit mode when salePrice exists */}
-                                    {isEdit && values.salePrice && values.salePrice > 0 && (
+                                    {!isMrpModel(values.pricingModel) && isEdit && values.salePrice && values.salePrice > 0 && (
                                         <div className="flex items-center justify-between">
                                             <label className="text-sm font-semibold text-gray-700">Current Sale Price</label>
                                             <p className="bg-transparent outline-none w-32 text-right font-bold text-green-600">
@@ -2277,6 +2349,7 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
                                         </div>
                                     )}
 
+                                    {!isMrpModel(values.pricingModel) && (<>
                                     <div className="flex items-center justify-between">
                                         <h2 className="text-sm font-semibold text-gray-700">
                                             Sale Price Calculation
@@ -2406,6 +2479,7 @@ export const StockEntryForm = ({ stockEntry, onSuccess, onCancel, onRedirect }: 
                                             Click "Calculate Sale Price" to get the estimated sale price based on current rates.
                                         </p>
                                     )}
+                                    </>)}
                                 </div>
 
                                 {/* Action Buttons */}

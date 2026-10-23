@@ -694,6 +694,11 @@ export const SaleForm = ({ onCancel, editOrderId }: SaleFormProps) => {
 
   const handleOpenEditCost = (item: any) => {
     if (!activeCartId) return;
+    // An MRP item is sold at its MRP; the server refuses cost edits for it.
+    if (String(item.pricingModel ?? item.PricingModel ?? "").trim().toUpperCase() === "MRP") {
+      toast.error("This item is sold at its MRP; its price cannot be edited here.");
+      return;
+    }
 
     const details = item.itemCostDetails || item.ItemCostDetails || {};
 
